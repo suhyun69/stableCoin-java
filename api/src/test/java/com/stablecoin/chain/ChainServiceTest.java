@@ -7,6 +7,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.io.IOException;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.util.List;
@@ -18,6 +19,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.ResourceAccessException;
 
 @RestClientTest(components = ChainService.class,
 		properties = { "chain.rpc-url=http://node.test", "chain.receipt-timeout=300ms" })
@@ -165,6 +167,26 @@ class ChainServiceTest {
 		assertThatThrownBy(() -> chainService.getTransaction("0xabc"))
 			.isInstanceOf(TransactionNotFoundException.class);
 		server.verify();
+	}
+
+	@Test
+	void getChainId() {
+		expectRpc("eth_chainId", """
+				{"jsonrpc":"2.0","id":1,"result":"0x7a69"}
+				""");
+
+		assertThat(chainService.getChainId()).isEqualTo(31337L);
+		server.verify();
+	}
+
+	@Test
+	void connectionFailureThrowsChainUnavailable() {
+		server.expect(requestTo("http://node.test")).andRespond(request -> {
+			throw new IOException("Connection refused");
+		});
+
+		assertThatThrownBy(() -> chainService.getChainId()).isInstanceOf(ChainUnavailableException.class)
+			.hasCauseInstanceOf(ResourceAccessException.class);
 	}
 
 	@Test

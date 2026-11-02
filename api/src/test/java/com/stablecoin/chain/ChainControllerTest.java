@@ -6,6 +6,7 @@ import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -22,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 
 @WebMvcTest(ChainController.class)
 class ChainControllerTest {
@@ -51,12 +53,26 @@ class ChainControllerTest {
 	}
 
 	@Test
-	void nodeUnavailableReturnsBadGateway() throws Exception {
-		given(chainService.getAccounts()).willThrow(new ResourceAccessException("Connection refused"));
+	void nodeUnavailableReturnsServiceUnavailableWithRetryAfter() throws Exception {
+		given(chainService.getAccounts()).willThrow(new ChainUnavailableException(
+				new ResourceAccessException("I/O error on POST request for \"http://127.0.0.1:8545\"")));
+
+		mockMvc.perform(get("/api/chain/accounts"))
+			.andExpect(status().isServiceUnavailable())
+			.andExpect(header().string("Retry-After", "5"))
+			.andExpect(jsonPath("$.code").value("CHAIN_UNAVAILABLE"))
+			.andExpect(jsonPath("$.detail").value("chain is temporarily unavailable"));
+	}
+
+	@Test
+	void unexpectedNodeResponseReturnsBadGatewayWithoutInternalDetails() throws Exception {
+		given(chainService.getAccounts())
+			.willThrow(new RestClientException("Error while extracting response from http://127.0.0.1:8545"));
 
 		mockMvc.perform(get("/api/chain/accounts"))
 			.andExpect(status().isBadGateway())
-			.andExpect(jsonPath("$.detail").value("Connection refused"));
+			.andExpect(jsonPath("$.code").value("CHAIN_ERROR"))
+			.andExpect(jsonPath("$.detail").value("chain returned an unexpected response"));
 	}
 
 	@Test
@@ -102,6 +118,7 @@ class ChainControllerTest {
 				{"from":"0x1234","to":"%s","amountEth":0}
 				""".formatted(TO)))
 			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
 			.andExpect(jsonPath("$.detail").value("amountEth: 0보다 커야 합니다, from: 올바른 지갑 주소가 아닙니다"));
 	}
 
@@ -114,6 +131,7 @@ class ChainControllerTest {
 				{"from":"%s","to":"%s","amountEth":100000}
 				""".formatted(FROM, TO)))
 			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("CHAIN_REJECTED"))
 			.andExpect(jsonPath("$.detail").value("eth_sendTransaction: Insufficient funds for gas * price + value"));
 	}
 
@@ -136,6 +154,7 @@ class ChainControllerTest {
 	void invalidTxHashReturnsBadRequest() throws Exception {
 		mockMvc.perform(get("/api/chain/transactions/{txHash}", "0x1234"))
 			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
 			.andExpect(jsonPath("$.detail").value("txHash: 올바른 트랜잭션 해시가 아닙니다"));
 
 		then(chainService).should(never()).getTransaction(any());
@@ -147,6 +166,7 @@ class ChainControllerTest {
 
 		mockMvc.perform(get("/api/chain/transactions/{txHash}", TX_HASH))
 			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.code").value("TRANSACTION_NOT_FOUND"))
 			.andExpect(jsonPath("$.detail").value("트랜잭션을 찾을 수 없습니다: " + TX_HASH));
 	}
 

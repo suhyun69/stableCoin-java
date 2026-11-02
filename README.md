@@ -29,12 +29,21 @@ cd api && ./gradlew bootRun
 | `GET` | `/api/chain/accounts` | anvil 지갑 목록과 잔액 (`balanceWei`, `balanceEth`) |
 | `POST` | `/api/chain/transfers` | 지갑 간 ETH 전송 |
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
+| `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
-오류는 `application/problem+json` 형식으로 반환합니다.
+`/actuator/health`는 노드를 포함한 전체 상태를 보여줍니다.
 
-- `400 Bad Request`: 요청 값이 잘못되었거나 노드가 거부함 (잔액 부족, 서명할 수 없는 지갑 등)
-- `404 Not Found`: 노드에 해당 트랜잭션이 없음
-- `502 Bad Gateway`: 노드에 연결할 수 없음
+오류는 `application/problem+json` 형식으로 반환하며, `code`로 오류 종류를 구분합니다.
+
+| 상태 | `code` | 의미 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | 요청 값이 잘못됨. `detail`에 필드별 사유 |
+| 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족, 서명할 수 없는 지갑 등). `detail`에 노드의 사유 |
+| 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
+| 503 | `CHAIN_UNAVAILABLE` | 노드에 연결할 수 없음 (연결 거부, timeout). `Retry-After` 헤더의 초만큼 기다린 뒤 다시 시도 |
+| 502 | `CHAIN_ERROR` | 노드가 올바르지 않은 응답을 반환함 |
+
+노드 주소 등 내부 정보는 응답에 넣지 않고 서버 로그에만 남깁니다. 노드 요청 timeout은 `spring.http.clients.connect-timeout`(1초), `spring.http.clients.read-timeout`(3초)으로 설정합니다.
 
 ```bash
 curl http://localhost:8080/api/chain/accounts
@@ -60,6 +69,8 @@ API 문서 (springdoc-openapi, 앱 실행 후):
 
 - Swagger UI: http://localhost:8080/swagger-ui.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
+
+`Chain` 태그에 체인 API가, `Actuator` 태그에 헬스 체크(`/actuator/health`, `/actuator/health/chain`)가 있으며 Swagger UI에서 바로 호출해 볼 수 있습니다.
 
 ## 로컬 노드 (Anvil)
 

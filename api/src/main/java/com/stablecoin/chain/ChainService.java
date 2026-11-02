@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -29,6 +30,14 @@ public class ChainService {
 			@Value("${chain.receipt-timeout:2s}") Duration receiptTimeout) {
 		this.restClient = builder.baseUrl(rpcUrl).build();
 		this.receiptTimeout = receiptTimeout;
+	}
+
+	/**
+	 * 노드의 체인 ID를 조회한다. 노드 연결 확인에도 쓴다.
+	 */
+	public long getChainId() {
+		String hex = call("eth_chainId", List.of(), new ParameterizedTypeReference<JsonRpcResponse<String>>() {});
+		return Eth.fromHexLong(hex);
 	}
 
 	/**
@@ -102,12 +111,23 @@ public class ChainService {
 		}
 	}
 
+	/**
+	 * JSON-RPC를 호출한다.
+	 * @throws ChainUnavailableException 노드에 연결할 수 없는 경우 (연결 거부, timeout 등)
+	 * @throws ChainException 노드가 오류를 반환한 경우
+	 */
 	private <T> T call(String method, List<?> params, ParameterizedTypeReference<JsonRpcResponse<T>> type) {
-		JsonRpcResponse<T> response = restClient.post()
-			.contentType(MediaType.APPLICATION_JSON)
-			.body(new JsonRpcRequest("2.0", requestId.incrementAndGet(), method, params))
-			.retrieve()
-			.body(type);
+		JsonRpcResponse<T> response;
+		try {
+			response = restClient.post()
+				.contentType(MediaType.APPLICATION_JSON)
+				.body(new JsonRpcRequest("2.0", requestId.incrementAndGet(), method, params))
+				.retrieve()
+				.body(type);
+		}
+		catch (ResourceAccessException ex) {
+			throw new ChainUnavailableException(ex);
+		}
 		if (response == null) {
 			throw new ChainException(method + ": empty response");
 		}
