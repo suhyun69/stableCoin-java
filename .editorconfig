@@ -1,0 +1,9 @@
+# 편집기 공통 설정 (IntelliJ, VS Code 등이 자동으로 읽는다)
+root = true
+
+[*]
+charset = utf-8
+
+# IntelliJ는 .properties 파일을 기본적으로 ISO-8859-1로 열어 한글 주석이 깨지므로 UTF-8로 지정한다.
+[*.properties]
+charset = utf-8
