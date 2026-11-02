@@ -20,6 +20,25 @@ cd api && ./gradlew build
 cd api && ./gradlew bootRun
 ```
 
+노드 RPC 주소는 `CHAIN_RPC_URL` 환경 변수로 바꿀 수 있습니다 (기본값 `http://127.0.0.1:8545`).
+
+### API
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| `GET` | `/api/chain/accounts` | anvil 지갑 목록과 잔액 (`balanceWei`, `balanceEth`) |
+
+노드에 연결할 수 없거나 노드가 오류를 반환하면 `502 Bad Gateway`를 반환합니다.
+
+```bash
+curl http://localhost:8080/api/chain/accounts
+```
+
+API 문서 (springdoc-openapi, 앱 실행 후):
+
+- Swagger UI: http://localhost:8080/swagger-ui.html
+- OpenAPI JSON: http://localhost:8080/v3/api-docs
+
 ## 로컬 노드 (Anvil)
 
 개발용 로컬 이더리움 노드는 [Foundry](https://github.com/foundry-rs/foundry)의 `anvil`로 실행합니다.
