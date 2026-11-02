@@ -1,4 +1,4 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.adapter.in.web;
 
 import java.math.BigDecimal;
 
@@ -8,16 +8,14 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 
+import com.stablecoin.chain.domain.Eth;
+
 /**
- * 전송 요청. 검증 메시지는 JVM 로케일과 관계없이 고정한다.
+ * 전송 요청. 보내는 지갑은 앱의 서명 지갑으로 고정되어 요청에 받지 않는다.
+ * 검증 메시지는 JVM 로케일과 관계없이 고정한다.
  */
 @Schema(description = "전송 요청")
 public record TransferRequest(
-		@Schema(description = "보낸 지갑 (노드가 서명할 수 있는 지갑)", example = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
-		@NotNull(message = "필수 값입니다")
-		@Pattern(regexp = ADDRESS, message = "올바른 지갑 주소가 아닙니다")
-		String from,
-
 		@Schema(description = "받는 지갑", example = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8")
 		@NotNull(message = "필수 값입니다")
 		@Pattern(regexp = ADDRESS, message = "올바른 지갑 주소가 아닙니다")

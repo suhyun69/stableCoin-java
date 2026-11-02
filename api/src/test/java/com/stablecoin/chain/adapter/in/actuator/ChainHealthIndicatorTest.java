@@ -1,4 +1,4 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.adapter.in.actuator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
@@ -10,17 +10,19 @@ import org.springframework.boot.health.contributor.Status;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 
+import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.chain.application.port.in.ChainQueryUseCase;
 import com.stablecoin.web.ApiErrorCode;
 
 class ChainHealthIndicatorTest {
 
-	private final ChainService chainService = mock(ChainService.class);
+	private final ChainQueryUseCase chainQuery = mock(ChainQueryUseCase.class);
 
-	private final ChainHealthIndicator indicator = new ChainHealthIndicator(chainService);
+	private final ChainHealthIndicator indicator = new ChainHealthIndicator(chainQuery);
 
 	@Test
 	void upWithChainIdWhenNodeResponds() {
-		given(chainService.getChainId()).willReturn(31337L);
+		given(chainQuery.getChainId()).willReturn(31337L);
 
 		Health health = indicator.health();
 
@@ -30,7 +32,7 @@ class ChainHealthIndicatorTest {
 
 	@Test
 	void downWhenNodeUnavailable() {
-		given(chainService.getChainId())
+		given(chainQuery.getChainId())
 			.willThrow(new ChainUnavailableException(new ResourceAccessException("Connection refused")));
 
 		Health health = indicator.health();
@@ -41,7 +43,7 @@ class ChainHealthIndicatorTest {
 
 	@Test
 	void downWhenNodeReturnsUnexpectedResponse() {
-		given(chainService.getChainId()).willThrow(new RestClientException("bad response"));
+		given(chainQuery.getChainId()).willThrow(new RestClientException("bad response"));
 
 		Health health = indicator.health();
 

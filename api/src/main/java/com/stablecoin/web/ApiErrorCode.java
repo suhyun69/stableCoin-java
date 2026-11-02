@@ -18,6 +18,12 @@ public enum ApiErrorCode {
 	CHAIN_UNAVAILABLE,
 
 	/** 노드가 올바르지 않은 응답을 반환함 */
-	CHAIN_ERROR
+	CHAIN_ERROR,
+
+	/** 서명 개인키가 설정되지 않음 */
+	SIGNER_NOT_CONFIGURED,
+
+	/** 노드의 체인 ID가 설정과 다름 */
+	CHAIN_ID_MISMATCH
 
 }

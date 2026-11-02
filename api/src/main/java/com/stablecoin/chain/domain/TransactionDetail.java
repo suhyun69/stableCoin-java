@@ -1,11 +1,6 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.domain;
 
-import java.math.BigInteger;
 import java.time.Instant;
-
-import com.stablecoin.chain.ChainService.RpcBlock;
-import com.stablecoin.chain.ChainService.RpcTransaction;
-import com.stablecoin.chain.ChainService.TransactionReceipt;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -33,25 +28,24 @@ public record TransactionDetail(
 		@Schema(description = "수수료 (ETH)", example = "0.000039378675") String feeEth,
 		@Schema(description = "입력 데이터 (hex). 단순 ETH 전송이면 0x", example = "0x") String input) {
 
-	static TransactionDetail of(RpcTransaction tx, TransactionReceipt receipt, RpcBlock block) {
-		BigInteger value = Eth.fromHex(tx.value());
+	/**
+	 * @param receipt 블록에 포함되기 전이면 null
+	 * @param timestamp 블록 생성 시각. 블록에 포함되기 전이면 null
+	 */
+	public static TransactionDetail of(ChainTransaction tx, ChainReceipt receipt, Instant timestamp) {
 		Long gasUsed = null;
-		String gasPrice = (tx.gasPrice() != null) ? Eth.fromHex(tx.gasPrice()).toString() : null;
+		String gasPrice = (tx.gasPrice() != null) ? tx.gasPrice().toString() : null;
 		String feeWei = null;
 		String feeEth = null;
 		if (receipt != null) {
-			BigInteger used = Eth.fromHex(receipt.gasUsed());
-			BigInteger price = Eth.fromHex(receipt.effectiveGasPrice());
-			BigInteger fee = used.multiply(price);
-			gasUsed = used.longValueExact();
-			gasPrice = price.toString();
-			feeWei = fee.toString();
-			feeEth = Eth.format(fee);
+			gasUsed = receipt.gasUsed().longValueExact();
+			gasPrice = receipt.effectiveGasPrice().toString();
+			feeWei = receipt.fee().toString();
+			feeEth = Eth.format(receipt.fee());
 		}
-		Instant timestamp = (block != null) ? Instant.ofEpochSecond(Eth.fromHexLong(block.timestamp())) : null;
-		return new TransactionDetail(tx.hash(), TransactionStatus.of(receipt), Eth.fromHexLong(tx.blockNumber()),
-				timestamp, tx.from(), tx.to(), value.toString(), Eth.format(value), Eth.fromHexLong(tx.nonce()),
-				Eth.fromHexLong(tx.gas()), gasUsed, gasPrice, feeWei, feeEth, tx.input());
+		return new TransactionDetail(tx.hash(), TransactionStatus.of(receipt), tx.blockNumber(), timestamp, tx.from(),
+				tx.to(), tx.value().toString(), Eth.format(tx.value()), tx.nonce(), tx.gasLimit(), gasUsed, gasPrice,
+				feeWei, feeEth, tx.input());
 	}
 
 }

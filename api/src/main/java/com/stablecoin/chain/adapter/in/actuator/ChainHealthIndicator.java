@@ -1,4 +1,4 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.adapter.in.actuator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,6 +7,8 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
+import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.chain.application.port.in.ChainQueryUseCase;
 import com.stablecoin.web.ApiErrorCode;
 
 /**
@@ -17,16 +19,16 @@ public class ChainHealthIndicator implements HealthIndicator {
 
 	private static final Logger log = LoggerFactory.getLogger(ChainHealthIndicator.class);
 
-	private final ChainService chainService;
+	private final ChainQueryUseCase chainQuery;
 
-	public ChainHealthIndicator(ChainService chainService) {
-		this.chainService = chainService;
+	public ChainHealthIndicator(ChainQueryUseCase chainQuery) {
+		this.chainQuery = chainQuery;
 	}
 
 	@Override
 	public Health health() {
 		try {
-			return Health.up().withDetail("chainId", chainService.getChainId()).build();
+			return Health.up().withDetail("chainId", chainQuery.getChainId()).build();
 		}
 		catch (ChainUnavailableException ex) {
 			log.debug("Chain health check failed", ex);

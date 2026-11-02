@@ -1,6 +1,4 @@
-package com.stablecoin.chain;
-
-import com.stablecoin.chain.ChainService.TransactionReceipt;
+package com.stablecoin.chain.domain;
 
 /**
  * 트랜잭션 상태.
@@ -16,11 +14,11 @@ public enum TransactionStatus {
 	/** 아직 블록에 포함되지 않음 */
 	PENDING;
 
-	static TransactionStatus of(TransactionReceipt receipt) {
+	public static TransactionStatus of(ChainReceipt receipt) {
 		if (receipt == null) {
 			return PENDING;
 		}
-		return "0x1".equals(receipt.status()) ? SUCCESS : FAILED;
+		return receipt.success() ? SUCCESS : FAILED;
 	}
 
 }

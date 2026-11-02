@@ -1,4 +1,4 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.application;
 
 /**
  * 노드가 해당 해시의 트랜잭션을 모를 때 발생한다.

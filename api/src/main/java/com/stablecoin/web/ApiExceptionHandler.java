@@ -18,9 +18,11 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
-import com.stablecoin.chain.ChainException;
-import com.stablecoin.chain.ChainUnavailableException;
-import com.stablecoin.chain.TransactionNotFoundException;
+import com.stablecoin.chain.application.ChainException;
+import com.stablecoin.chain.application.ChainIdMismatchException;
+import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.chain.application.SignerNotConfiguredException;
+import com.stablecoin.chain.application.TransactionNotFoundException;
 
 /**
  * 모든 오류를 ProblemDetail(application/problem+json)로 반환한다. 응답의 code로 오류 종류를 구분한다.
@@ -87,6 +89,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 			.header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
 			.body(problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.CHAIN_UNAVAILABLE,
 					"chain is temporarily unavailable"));
+	}
+
+	/**
+	 * 서명 개인키가 설정되지 않은 경우. 서버 설정 문제이므로 500으로 응답한다.
+	 */
+	@ExceptionHandler(SignerNotConfiguredException.class)
+	public ProblemDetail handleSignerNotConfigured(SignerNotConfiguredException ex) {
+		log.error("Transfer requested but signer is not configured");
+		return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.SIGNER_NOT_CONFIGURED,
+				"signer is not configured");
+	}
+
+	/**
+	 * 노드의 체인 ID가 설정과 다른 경우. 잘못된 체인에 서명하지 않도록 전송을 거부한다.
+	 */
+	@ExceptionHandler(ChainIdMismatchException.class)
+	public ProblemDetail handleChainIdMismatch(ChainIdMismatchException ex) {
+		log.error("Refusing to sign: {}", ex.getMessage());
+		return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.CHAIN_ID_MISMATCH,
+				"connected chain does not match the configured chain");
 	}
 
 	/**

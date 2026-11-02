@@ -1,4 +1,4 @@
-package com.stablecoin.chain;
+package com.stablecoin.chain.domain;
 
 import java.math.BigInteger;
 
