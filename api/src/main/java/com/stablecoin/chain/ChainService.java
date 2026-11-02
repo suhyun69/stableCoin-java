@@ -1,6 +1,7 @@
 package com.stablecoin.chain;
 
 import java.math.BigInteger;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -16,12 +17,18 @@ import org.springframework.web.client.RestClient;
 @Service
 public class ChainService {
 
+	private static final Duration RECEIPT_POLL_INTERVAL = Duration.ofMillis(100);
+
 	private final RestClient restClient;
+
+	private final Duration receiptTimeout;
 
 	private final AtomicLong requestId = new AtomicLong();
 
-	public ChainService(RestClient.Builder builder, @Value("${chain.rpc-url}") String rpcUrl) {
+	public ChainService(RestClient.Builder builder, @Value("${chain.rpc-url}") String rpcUrl,
+			@Value("${chain.receipt-timeout:2s}") Duration receiptTimeout) {
 		this.restClient = builder.baseUrl(rpcUrl).build();
+		this.receiptTimeout = receiptTimeout;
 	}
 
 	/**
@@ -41,7 +48,38 @@ public class ChainService {
 	public BigInteger getBalance(String address) {
 		String hex = call("eth_getBalance", List.of(address, "latest"),
 				new ParameterizedTypeReference<JsonRpcResponse<String>>() {});
-		return new BigInteger(hex.substring(2), 16);
+		return Eth.fromHex(hex);
+	}
+
+	/**
+	 * 노드가 서명할 수 있는 지갑(from)에서 다른 지갑(to)으로 ETH를 전송한다.
+	 * anvil은 트랜잭션 해시를 먼저 반환하고 블록을 생성하므로, receipt-timeout 동안 영수증을 기다린다.
+	 */
+	public Transfer transfer(String from, String to, BigInteger wei) {
+		String txHash = call("eth_sendTransaction", List.of(new TransactionRequest(from, to, Eth.toHex(wei))),
+				new ParameterizedTypeReference<JsonRpcResponse<String>>() {});
+		return Transfer.of(txHash, from, to, wei, waitForReceipt(txHash));
+	}
+
+	/**
+	 * 영수증이 나올 때까지 조회한다. 시간 안에 나오지 않으면 null.
+	 */
+	private TransactionReceipt waitForReceipt(String txHash) {
+		long deadline = System.nanoTime() + receiptTimeout.toNanos();
+		while (true) {
+			TransactionReceipt receipt = call("eth_getTransactionReceipt", List.of(txHash),
+					new ParameterizedTypeReference<JsonRpcResponse<TransactionReceipt>>() {});
+			if (receipt != null || System.nanoTime() >= deadline) {
+				return receipt;
+			}
+			try {
+				Thread.sleep(RECEIPT_POLL_INTERVAL);
+			}
+			catch (InterruptedException ex) {
+				Thread.currentThread().interrupt();
+				return null;
+			}
+		}
 	}
 
 	private <T> T call(String method, List<?> params, ParameterizedTypeReference<JsonRpcResponse<T>> type) {
@@ -66,6 +104,15 @@ public class ChainService {
 	}
 
 	public record JsonRpcError(int code, String message) {
+	}
+
+	public record TransactionRequest(String from, String to, String value) {
+	}
+
+	/**
+	 * 트랜잭션 영수증 중 필요한 필드. 아직 블록에 포함되지 않았으면 노드가 null을 반환한다.
+	 */
+	public record TransactionReceipt(String blockNumber, String status) {
 	}
 
 }

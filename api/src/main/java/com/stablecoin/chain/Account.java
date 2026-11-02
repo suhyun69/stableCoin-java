@@ -1,6 +1,5 @@
 package com.stablecoin.chain;
 
-import java.math.BigDecimal;
 import java.math.BigInteger;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -14,11 +13,8 @@ public record Account(
 		@Schema(description = "잔액 (wei)", example = "10000000000000000000000") String balanceWei,
 		@Schema(description = "잔액 (ETH)", example = "10000") String balanceEth) {
 
-	private static final int ETH_DECIMALS = 18;
-
 	public static Account of(String address, BigInteger wei) {
-		String eth = new BigDecimal(wei).movePointLeft(ETH_DECIMALS).stripTrailingZeros().toPlainString();
-		return new Account(address, wei.toString(), eth);
+		return new Account(address, wei.toString(), Eth.format(wei));
 	}
 
 }

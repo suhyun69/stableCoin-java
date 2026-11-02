@@ -7,6 +7,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import java.math.BigInteger;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -14,10 +15,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.restclient.test.autoconfigure.RestClientTest;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 
-@RestClientTest(components = ChainService.class, properties = "chain.rpc-url=http://node.test")
+@RestClientTest(components = ChainService.class,
+		properties = { "chain.rpc-url=http://node.test", "chain.receipt-timeout=300ms" })
 class ChainServiceTest {
+
+	private static final String FROM = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+
+	private static final String TO = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 
 	@Autowired
 	private ChainService chainService;
@@ -39,6 +46,66 @@ class ChainServiceTest {
 		assertThat(accounts).containsExactly(new Account("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
 				"10000000000000000000000", "10000"));
 		server.verify();
+	}
+
+	@Test
+	void transferSendsTransactionAndReturnsReceipt() {
+		server.expect(requestTo("http://node.test"))
+			.andExpect(jsonPath("$.method").value("eth_sendTransaction"))
+			.andExpect(jsonPath("$.params[0].from").value(FROM))
+			.andExpect(jsonPath("$.params[0].to").value(TO))
+			.andExpect(jsonPath("$.params[0].value").value("0x14d1120d7b160000"))
+			.andRespond(withSuccess("""
+					{"jsonrpc":"2.0","id":1,"result":"0xabc"}
+					""", MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://node.test"))
+			.andExpect(jsonPath("$.method").value("eth_getTransactionReceipt"))
+			.andExpect(jsonPath("$.params[0]").value("0xabc"))
+			.andRespond(withSuccess("""
+					{"jsonrpc":"2.0","id":2,"result":{"blockNumber":"0x5","status":"0x1","gasUsed":"0x5208"}}
+					""", MediaType.APPLICATION_JSON));
+
+		Transfer transfer = chainService.transfer(FROM, TO, new BigInteger("1500000000000000000"));
+
+		assertThat(transfer).isEqualTo(new Transfer("0xabc", FROM, TO, "1500000000000000000", "1.5", 5L,
+				Transfer.Status.SUCCESS));
+		server.verify();
+	}
+
+	@Test
+	void transferWaitsUntilReceiptIsAvailable() {
+		expectRpc("eth_sendTransaction", """
+				{"jsonrpc":"2.0","id":1,"result":"0xabc"}
+				""");
+		expectRpc("eth_getTransactionReceipt", """
+				{"jsonrpc":"2.0","id":2,"result":null}
+				""");
+		expectRpc("eth_getTransactionReceipt", """
+				{"jsonrpc":"2.0","id":3,"result":{"blockNumber":"0x2","status":"0x0"}}
+				""");
+
+		Transfer transfer = chainService.transfer(FROM, TO, BigInteger.ONE);
+
+		assertThat(transfer.status()).isEqualTo(Transfer.Status.FAILED);
+		assertThat(transfer.blockNumber()).isEqualTo(2L);
+		server.verify();
+	}
+
+	@Test
+	void transferWithoutReceiptBeforeTimeoutIsPending() {
+		expectRpc("eth_sendTransaction", """
+				{"jsonrpc":"2.0","id":1,"result":"0xabc"}
+				""");
+		server.expect(ExpectedCount.manyTimes(), requestTo("http://node.test"))
+			.andExpect(jsonPath("$.method").value("eth_getTransactionReceipt"))
+			.andRespond(withSuccess("""
+					{"jsonrpc":"2.0","id":2,"result":null}
+					""", MediaType.APPLICATION_JSON));
+
+		Transfer transfer = chainService.transfer(FROM, TO, BigInteger.ONE);
+
+		assertThat(transfer.status()).isEqualTo(Transfer.Status.PENDING);
+		assertThat(transfer.blockNumber()).isNull();
 	}
 
 	@Test
