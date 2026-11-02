@@ -28,10 +28,12 @@ cd api && ./gradlew bootRun
 | --- | --- | --- |
 | `GET` | `/api/chain/accounts` | anvil 지갑 목록과 잔액 (`balanceWei`, `balanceEth`) |
 | `POST` | `/api/chain/transfers` | 지갑 간 ETH 전송 |
+| `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
 
 오류는 `application/problem+json` 형식으로 반환합니다.
 
 - `400 Bad Request`: 요청 값이 잘못되었거나 노드가 거부함 (잔액 부족, 서명할 수 없는 지갑 등)
+- `404 Not Found`: 노드에 해당 트랜잭션이 없음
 - `502 Bad Gateway`: 노드에 연결할 수 없음
 
 ```bash
@@ -47,6 +49,12 @@ curl -X POST http://localhost:8080/api/chain/transfers \
 ```
 
 응답의 `status`는 `SUCCESS`, `FAILED`, `PENDING` 중 하나입니다. 전송 후 `chain.receipt-timeout`(기본 2초) 동안 블록 포함을 기다리고, 그 안에 포함되지 않으면 `PENDING`을 반환합니다.
+
+전송 응답의 `txHash`로 상세 정보를 조회할 수 있습니다. 상태, 블록 번호와 시각, 금액, nonce, 가스 한도/사용량, 가스 가격, 수수료(`gasUsed × gasPrice`), 입력 데이터를 반환합니다. `PENDING`이면 블록, 가스 사용량, 수수료 값은 `null`입니다.
+
+```bash
+curl http://localhost:8080/api/chain/transactions/0x...
+```
 
 API 문서 (springdoc-openapi, 앱 실행 후):
 

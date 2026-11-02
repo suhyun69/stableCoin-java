@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,8 @@ class ChainControllerTest {
 	private static final String FROM = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
 	private static final String TO = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
+
+	private static final String TX_HASH = "0x236660fa85ffc77d11a69d8ccbbe440d4182516d9bf1bbef0af6baa271b31a15";
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -60,7 +63,7 @@ class ChainControllerTest {
 	void transfer() throws Exception {
 		BigInteger wei = new BigInteger("1500000000000000000");
 		given(chainService.transfer(FROM, TO, wei))
-			.willReturn(new Transfer("0xabc", FROM, TO, wei.toString(), "1.5", 1L, Transfer.Status.SUCCESS));
+			.willReturn(new Transfer("0xabc", FROM, TO, wei.toString(), "1.5", 1L, TransactionStatus.SUCCESS));
 
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON).content("""
 				{"from":"%s","to":"%s","amountEth":1.5}
@@ -112,6 +115,39 @@ class ChainControllerTest {
 				""".formatted(FROM, TO)))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail").value("eth_sendTransaction: Insufficient funds for gas * price + value"));
+	}
+
+	@Test
+	void getTransaction() throws Exception {
+		given(chainService.getTransaction(TX_HASH)).willReturn(new TransactionDetail(TX_HASH,
+				TransactionStatus.SUCCESS, 5L, Instant.parse("2026-11-02T12:00:00Z"), FROM, TO, "1500000000000000000",
+				"1.5", 3L, 21001L, 21000L, "1000000000", "21000000000000", "0.000021", "0x"));
+
+		mockMvc.perform(get("/api/chain/transactions/{txHash}", TX_HASH))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.txHash").value(TX_HASH))
+			.andExpect(jsonPath("$.status").value("SUCCESS"))
+			.andExpect(jsonPath("$.timestamp").value("2026-11-02T12:00:00Z"))
+			.andExpect(jsonPath("$.valueEth").value("1.5"))
+			.andExpect(jsonPath("$.feeWei").value("21000000000000"));
+	}
+
+	@Test
+	void invalidTxHashReturnsBadRequest() throws Exception {
+		mockMvc.perform(get("/api/chain/transactions/{txHash}", "0x1234"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("txHash: 올바른 트랜잭션 해시가 아닙니다"));
+
+		then(chainService).should(never()).getTransaction(any());
+	}
+
+	@Test
+	void unknownTransactionReturnsNotFound() throws Exception {
+		given(chainService.getTransaction(TX_HASH)).willThrow(new TransactionNotFoundException(TX_HASH));
+
+		mockMvc.perform(get("/api/chain/transactions/{txHash}", TX_HASH))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.detail").value("트랜잭션을 찾을 수 없습니다: " + TX_HASH));
 	}
 
 }

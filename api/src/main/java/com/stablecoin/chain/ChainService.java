@@ -62,13 +62,33 @@ public class ChainService {
 	}
 
 	/**
+	 * 트랜잭션 상세 정보를 조회한다. 블록에 포함되었으면 영수증과 블록 시각도 함께 조회한다.
+	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우
+	 */
+	public TransactionDetail getTransaction(String txHash) {
+		RpcTransaction tx = call("eth_getTransactionByHash", List.of(txHash),
+				new ParameterizedTypeReference<JsonRpcResponse<RpcTransaction>>() {});
+		if (tx == null) {
+			throw new TransactionNotFoundException(txHash);
+		}
+		TransactionReceipt receipt = getReceipt(txHash);
+		RpcBlock block = (receipt != null) ? call("eth_getBlockByNumber", List.of(receipt.blockNumber(), false),
+				new ParameterizedTypeReference<JsonRpcResponse<RpcBlock>>() {}) : null;
+		return TransactionDetail.of(tx, receipt, block);
+	}
+
+	private TransactionReceipt getReceipt(String txHash) {
+		return call("eth_getTransactionReceipt", List.of(txHash),
+				new ParameterizedTypeReference<JsonRpcResponse<TransactionReceipt>>() {});
+	}
+
+	/**
 	 * 영수증이 나올 때까지 조회한다. 시간 안에 나오지 않으면 null.
 	 */
 	private TransactionReceipt waitForReceipt(String txHash) {
 		long deadline = System.nanoTime() + receiptTimeout.toNanos();
 		while (true) {
-			TransactionReceipt receipt = call("eth_getTransactionReceipt", List.of(txHash),
-					new ParameterizedTypeReference<JsonRpcResponse<TransactionReceipt>>() {});
+			TransactionReceipt receipt = getReceipt(txHash);
 			if (receipt != null || System.nanoTime() >= deadline) {
 				return receipt;
 			}
@@ -112,7 +132,17 @@ public class ChainService {
 	/**
 	 * 트랜잭션 영수증 중 필요한 필드. 아직 블록에 포함되지 않았으면 노드가 null을 반환한다.
 	 */
-	public record TransactionReceipt(String blockNumber, String status) {
+	public record TransactionReceipt(String blockNumber, String status, String gasUsed, String effectiveGasPrice) {
+	}
+
+	/**
+	 * eth_getTransactionByHash 결과 중 필요한 필드. 블록에 포함되기 전이면 blockNumber가 null이다.
+	 */
+	public record RpcTransaction(String hash, String from, String to, String value, String nonce, String gas,
+			String gasPrice, String blockNumber, String input) {
+	}
+
+	public record RpcBlock(String timestamp) {
 	}
 
 }

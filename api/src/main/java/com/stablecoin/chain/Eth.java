@@ -29,4 +29,8 @@ final class Eth {
 		return new BigInteger(hex.substring(2), 16);
 	}
 
+	static Long fromHexLong(String hex) {
+		return (hex != null) ? fromHex(hex).longValueExact() : null;
+	}
+
 }
