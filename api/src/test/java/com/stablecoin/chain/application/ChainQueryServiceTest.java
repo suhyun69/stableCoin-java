@@ -43,11 +43,13 @@ class ChainQueryServiceTest {
 	}
 
 	@Test
-	void signerAddressWithBalance() {
-		given(signer.address()).willReturn(FROM);
+	void signersWithBalances() {
+		given(signer.addresses()).willReturn(List.of(FROM, TO));
 		given(chainNode.getBalance(FROM)).willReturn(new BigInteger("1500000000000000000"));
+		given(chainNode.getBalance(TO)).willReturn(BigInteger.ZERO);
 
-		assertThat(service.getSigner()).isEqualTo(new Account(FROM, "1500000000000000000", "1.5"));
+		assertThat(service.getSigners()).containsExactly(new Account(FROM, "1500000000000000000", "1.5"),
+				new Account(TO, "0", "0"));
 	}
 
 	@Test

@@ -19,9 +19,9 @@ public interface ChainQueryUseCase {
 	List<Account> getAccounts();
 
 	/**
-	 * 서명 지갑의 주소와 잔액.
+	 * 앱이 서명할 수 있는 지갑(전송의 from으로 쓸 수 있는 지갑) 목록과 잔액.
 	 */
-	Account getSigner();
+	List<Account> getSigners();
 
 	/**
 	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우

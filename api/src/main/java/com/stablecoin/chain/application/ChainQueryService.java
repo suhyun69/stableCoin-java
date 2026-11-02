@@ -39,9 +39,8 @@ public class ChainQueryService implements ChainQueryUseCase {
 	}
 
 	@Override
-	public Account getSigner() {
-		String address = signer.address();
-		return Account.of(address, chainNode.getBalance(address));
+	public List<Account> getSigners() {
+		return signer.addresses().stream().map(address -> Account.of(address, chainNode.getBalance(address))).toList();
 	}
 
 	@Override

@@ -21,8 +21,8 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import com.stablecoin.chain.application.ChainException;
 import com.stablecoin.chain.application.ChainIdMismatchException;
 import com.stablecoin.chain.application.ChainUnavailableException;
-import com.stablecoin.chain.application.SignerNotConfiguredException;
 import com.stablecoin.chain.application.TransactionNotFoundException;
+import com.stablecoin.chain.application.UnknownSignerException;
 
 /**
  * 모든 오류를 ProblemDetail(application/problem+json)로 반환한다. 응답의 code로 오류 종류를 구분한다.
@@ -92,13 +92,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	}
 
 	/**
-	 * 서명 개인키가 설정되지 않은 경우. 서버 설정 문제이므로 500으로 응답한다.
+	 * 앱이 키를 갖고 있지 않은 지갑에서 보내려 한 경우.
 	 */
-	@ExceptionHandler(SignerNotConfiguredException.class)
-	public ProblemDetail handleSignerNotConfigured(SignerNotConfiguredException ex) {
-		log.error("Transfer requested but signer is not configured");
-		return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.SIGNER_NOT_CONFIGURED,
-				"signer is not configured");
+	@ExceptionHandler(UnknownSignerException.class)
+	public ProblemDetail handleUnknownSigner(UnknownSignerException ex) {
+		return problem(HttpStatus.BAD_REQUEST, ApiErrorCode.UNKNOWN_SIGNER, ex.getMessage());
 	}
 
 	/**

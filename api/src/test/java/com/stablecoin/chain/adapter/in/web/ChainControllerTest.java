@@ -28,8 +28,8 @@ import org.springframework.web.client.RestClientException;
 import com.stablecoin.chain.application.ChainException;
 import com.stablecoin.chain.application.ChainIdMismatchException;
 import com.stablecoin.chain.application.ChainUnavailableException;
-import com.stablecoin.chain.application.SignerNotConfiguredException;
 import com.stablecoin.chain.application.TransactionNotFoundException;
+import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.chain.application.port.in.ChainQueryUseCase;
 import com.stablecoin.chain.application.port.in.TransferUseCase;
 import com.stablecoin.chain.domain.Account;
@@ -68,22 +68,13 @@ class ChainControllerTest {
 	}
 
 	@Test
-	void getSigner() throws Exception {
-		given(chainQuery.getSigner()).willReturn(Account.of(SIGNER, new BigInteger("2000000000000000000")));
+	void getSigners() throws Exception {
+		given(chainQuery.getSigners()).willReturn(List.of(Account.of(SIGNER, new BigInteger("2000000000000000000"))));
 
-		mockMvc.perform(get("/api/chain/signer"))
+		mockMvc.perform(get("/api/chain/signers"))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.address").value(SIGNER))
-			.andExpect(jsonPath("$.balanceEth").value("2"));
-	}
-
-	@Test
-	void signerNotConfiguredReturnsServerError() throws Exception {
-		given(chainQuery.getSigner()).willThrow(new SignerNotConfiguredException());
-
-		mockMvc.perform(get("/api/chain/signer"))
-			.andExpect(status().isInternalServerError())
-			.andExpect(jsonPath("$.code").value("SIGNER_NOT_CONFIGURED"));
+			.andExpect(jsonPath("$[0].address").value(SIGNER))
+			.andExpect(jsonPath("$[0].balanceEth").value("2"));
 	}
 
 	@Test
@@ -112,12 +103,12 @@ class ChainControllerTest {
 	@Test
 	void transfer() throws Exception {
 		BigInteger wei = new BigInteger("1500000000000000000");
-		given(transferUseCase.transfer(TO, wei)).willReturn(
+		given(transferUseCase.transfer(SIGNER, TO, wei)).willReturn(
 				new Transfer("0xabc", SIGNER, TO, wei.toString(), "1.5", 4L, 1L, TransactionStatus.SUCCESS));
 
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON).content("""
-				{"to":"%s","amountEth":1.5}
-				""".formatted(TO)))
+				{"from":"%s","to":"%s","amountEth":1.5}
+				""".formatted(SIGNER, TO)))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.txHash").value("0xabc"))
 			.andExpect(jsonPath("$.from").value(SIGNER))
@@ -130,22 +121,26 @@ class ChainControllerTest {
 
 	@ParameterizedTest
 	@ValueSource(strings = { """
-			{"to":"0x1234","amountEth":1}
+			{"to":"%s","amountEth":1}
 			""", """
-			{"amountEth":1}
+			{"from":"0x1234","to":"%s","amountEth":1}
 			""", """
-			{"to":"%s","amountEth":0}
+			{"from":"%2$s","to":"0x1234","amountEth":1}
 			""", """
-			{"to":"%s","amountEth":-1}
+			{"from":"%2$s","amountEth":1}
 			""", """
-			{"to":"%s","amountEth":0.0000000000000000001}
+			{"from":"%2$s","to":"%1$s","amountEth":0}
+			""", """
+			{"from":"%2$s","to":"%1$s","amountEth":-1}
+			""", """
+			{"from":"%2$s","to":"%1$s","amountEth":0.0000000000000000001}
 			""" })
 	void invalidTransferRequestReturnsBadRequest(String body) throws Exception {
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON)
-			.content(body.formatted(TO)))
+			.content(body.formatted(TO, SIGNER)))
 			.andExpect(status().isBadRequest());
 
-		then(transferUseCase).should(never()).transfer(any(), any());
+		then(transferUseCase).should(never()).transfer(any(), any(), any());
 	}
 
 	@Test
@@ -155,41 +150,42 @@ class ChainControllerTest {
 				"""))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
-			.andExpect(jsonPath("$.detail").value("amountEth: 0보다 커야 합니다, to: 올바른 지갑 주소가 아닙니다"));
+			.andExpect(jsonPath("$.detail")
+				.value("amountEth: 0보다 커야 합니다, from: 필수 값입니다, to: 올바른 지갑 주소가 아닙니다"));
 	}
 
 	@Test
 	void transferRejectedByNodeReturnsBadRequest() throws Exception {
-		given(transferUseCase.transfer(any(), any()))
+		given(transferUseCase.transfer(any(), any(), any()))
 			.willThrow(new ChainException("eth_estimateGas: Insufficient funds for gas * price + value"));
 
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON).content("""
-				{"to":"%s","amountEth":100000}
-				""".formatted(TO)))
+				{"from":"%s","to":"%s","amountEth":100000}
+				""".formatted(SIGNER, TO)))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.code").value("CHAIN_REJECTED"))
 			.andExpect(jsonPath("$.detail").value("eth_estimateGas: Insufficient funds for gas * price + value"));
 	}
 
 	@Test
-	void transferWithoutSignerReturnsServerError() throws Exception {
-		given(transferUseCase.transfer(any(), any())).willThrow(new SignerNotConfiguredException());
+	void transferFromUnknownWalletReturnsBadRequest() throws Exception {
+		String unknown = "0x000000000000000000000000000000000000dead";
+		given(transferUseCase.transfer(any(), any(), any())).willThrow(new UnknownSignerException(unknown));
 
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON).content("""
-				{"to":"%s","amountEth":1}
-				""".formatted(TO)))
-			.andExpect(status().isInternalServerError())
-			.andExpect(jsonPath("$.code").value("SIGNER_NOT_CONFIGURED"))
-			.andExpect(jsonPath("$.detail").value("signer is not configured"));
+				{"from":"%s","to":"%s","amountEth":1}
+				""".formatted(unknown, TO)))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.code").value("UNKNOWN_SIGNER"));
 	}
 
 	@Test
 	void transferOnWrongChainReturnsServerErrorWithoutIds() throws Exception {
-		given(transferUseCase.transfer(any(), any())).willThrow(new ChainIdMismatchException(31337L, 1L));
+		given(transferUseCase.transfer(any(), any(), any())).willThrow(new ChainIdMismatchException(31337L, 1L));
 
 		mockMvc.perform(post("/api/chain/transfers").contentType(MediaType.APPLICATION_JSON).content("""
-				{"to":"%s","amountEth":1}
-				""".formatted(TO)))
+				{"from":"%s","to":"%s","amountEth":1}
+				""".formatted(SIGNER, TO)))
 			.andExpect(status().isInternalServerError())
 			.andExpect(jsonPath("$.code").value("CHAIN_ID_MISMATCH"))
 			.andExpect(jsonPath("$.detail").value("connected chain does not match the configured chain"));

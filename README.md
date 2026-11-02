@@ -53,15 +53,12 @@ cd api && ./gradlew bootRun
 | --- | --- | --- |
 | `CHAIN_RPC_URL` | `http://127.0.0.1:8545` | 노드 RPC 주소 |
 | `CHAIN_ID` | `31337` | 서명에 넣는 체인 ID. 앱 시작 시 노드의 체인 ID와 다르면 **앱이 시작되지 않습니다** |
-| `CHAIN_SIGNER_PRIVATE_KEY` | (없음) | 전송에 쓰는 서명 지갑의 개인키. 없으면 앱은 시작하지만 전송은 `500 SIGNER_NOT_CONFIGURED` |
+| `CHAIN_DEV_WALLETS_MNEMONIC` | anvil 기본 니모닉 (`test test … junk`) | 전송에 쓸 지갑 키를 계산하는 니모닉 |
+| `CHAIN_DEV_WALLETS_COUNT` | `10` | 계산할 지갑 수 |
 
-환경 변수 대신 `api/.env`에 넣어도 됩니다 (`.env`는 git에 커밋되지 않음).
+**개인키는 설정하지 않습니다.** anvil은 기본 니모닉에서 BIP-44 경로 `m/44'/60'/0'/0/i`로 지갑 10개를 만듭니다. 앱도 시작할 때 같은 니모닉과 경로로 키를 계산해 메모리에만 두므로, anvil을 다시 띄워도 그대로 쓸 수 있습니다. 개인키는 요청, 응답, 로그 어디에도 나가지 않고, 요청에는 보내는 지갑 주소(`from`)만 넣습니다.
 
-```bash
-cd api && cp .env.example .env
-```
-
-로컬 anvil이라면 시작 로그의 `Private Keys` (0)번 값을 `CHAIN_SIGNER_PRIVATE_KEY`에 넣습니다 (`docker compose logs anvil`). 개인키는 로그나 응답에 남기지 않으며, 시작 로그에는 서명 지갑 주소만 출력합니다. 앱 시작 시 노드에 연결할 수 없으면 경고만 남기고 시작하며, 체인 ID는 첫 전송 전에 확인합니다.
+기본 니모닉은 공개된 값이므로 **로컬 체인(`CHAIN_ID=31337`)에서만** 허용됩니다. 다른 체인 ID로 설정하면 앱이 시작되지 않습니다. `anvil --mnemonic`으로 니모닉을 바꿨다면 `CHAIN_DEV_WALLETS_MNEMONIC`도 같은 값으로 설정하세요.
 
 ### 코드 구조 (포트와 어댑터)
 
@@ -77,18 +74,18 @@ com.stablecoin.chain
     ├── in/actuator/         헬스 체크 (ChainHealthIndicator)
     ├── in/startup/          시작 시 체인 ID 확인 (ChainIdStartupCheck)
     ├── out/rpc/             JSON-RPC 노드 어댑터 (JsonRpcChainNode, RestClient)
-    └── out/signer/          서명 어댑터 (Web3jTransactionSigner, web3j)
+    └── out/signer/          서명 어댑터 (AnvilDevWalletSigner: anvil 니모닉에서 계산한 키로 서명, web3j)
 ```
 
-애플리케이션 계층은 포트(인터페이스)에만 의존하므로, 노드 통신 방식이나 서명 방식(예: KMS)을 바꿔도 어댑터만 교체하면 됩니다. 테스트에서는 포트를 가짜로 바꿔 노드와 개인키 없이 전송 절차를 검증합니다.
+애플리케이션 계층은 포트(인터페이스)에만 의존하므로, 노드 통신 방식이나 서명 방식(예: 실제 네트워크용 KMS)을 바꿔도 어댑터만 교체하면 됩니다. 테스트에서는 포트를 가짜로 바꿔 노드와 개인키 없이 전송 절차를 검증합니다.
 
 ### API
 
 | 메서드 | 경로 | 설명 |
 | --- | --- | --- |
 | `GET` | `/api/chain/accounts` | anvil 지갑 목록과 잔액 (`balanceWei`, `balanceEth`) |
-| `GET` | `/api/chain/signer` | 서명 지갑 주소와 잔액 |
-| `POST` | `/api/chain/transfers` | 서명 지갑에서 ETH 전송 |
+| `GET` | `/api/chain/signers` | 전송의 `from`으로 쓸 수 있는 지갑(앱이 키를 가진 anvil 지갑) 목록과 잔액 |
+| `POST` | `/api/chain/transfers` | `from` 지갑에서 ETH 전송 |
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
 | `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
@@ -99,11 +96,11 @@ com.stablecoin.chain
 | 상태 | `code` | 의미 |
 | --- | --- | --- |
 | 400 | `INVALID_REQUEST` | 요청 값이 잘못됨. `detail`에 필드별 사유 |
+| 400 | `UNKNOWN_SIGNER` | 앱이 `from` 지갑의 키를 갖고 있지 않음 |
 | 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족 등). `detail`에 노드의 사유 |
 | 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
 | 503 | `CHAIN_UNAVAILABLE` | 노드에 연결할 수 없음 (연결 거부, timeout). `Retry-After` 헤더의 초만큼 기다린 뒤 다시 시도 |
 | 502 | `CHAIN_ERROR` | 노드가 올바르지 않은 응답을 반환함 |
-| 500 | `SIGNER_NOT_CONFIGURED` | 서명 개인키가 설정되지 않음 |
 | 500 | `CHAIN_ID_MISMATCH` | 노드의 체인 ID가 설정과 다름 (앱 시작 시 노드에 연결할 수 없었던 경우) |
 
 노드 주소 등 내부 정보는 응답에 넣지 않고 서버 로그에만 남깁니다. 노드 요청 timeout은 `spring.http.clients.connect-timeout`(1초), `spring.http.clients.read-timeout`(3초)으로 설정합니다.
@@ -112,15 +109,15 @@ com.stablecoin.chain
 curl http://localhost:8080/api/chain/accounts
 ```
 
-전송은 **서명 지갑(`CHAIN_SIGNER_PRIVATE_KEY`)에서만** 보냅니다. 앱이 nonce, 가스 한도(`eth_estimateGas`), 수수료(`maxFeePerGas = baseFee × 2 + maxPriorityFee`)를 채워 EIP-1559 트랜잭션에 직접 서명하고 `eth_sendRawTransaction`으로 보내므로, 노드가 키를 갖고 있지 않은 실제 네트워크에서도 동작합니다. 금액은 ETH 단위이며 소수점 18자리까지 입력할 수 있습니다.
+전송은 `from`에 **보내는 지갑 주소**를 넣습니다 (`GET /api/chain/signers`의 주소, 대소문자 무관). 앱이 그 지갑의 키로 nonce, 가스 한도(`eth_estimateGas`), 수수료(`maxFeePerGas = baseFee × 2 + maxPriorityFee`)를 채운 EIP-1559 트랜잭션에 직접 서명하고 `eth_sendRawTransaction`으로 보냅니다. 금액은 ETH 단위이며 소수점 18자리까지 입력할 수 있습니다.
 
 ```bash
 curl -X POST http://localhost:8080/api/chain/transfers \
   -H 'Content-Type: application/json' \
-  -d '{"to":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":1.5}'
+  -d '{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":1.5}'
 ```
 
-응답의 `from`은 서명 지갑, `nonce`는 이 전송에 쓴 nonce입니다. 같은 nonce를 두 번 쓰지 않도록 앱 인스턴스 안에서는 전송을 한 번에 하나씩 서명하고 보냅니다. 앱을 여러 대 띄워 같은 지갑을 쓰면 별도의 순서 보장이 필요합니다.
+응답의 `nonce`는 이 전송에 쓴 nonce입니다. 같은 지갑이 같은 nonce를 두 번 쓰지 않도록 앱 인스턴스 안에서는 **지갑별로** 전송을 한 번에 하나씩 서명하고 보냅니다 (다른 지갑끼리는 동시에 처리). 앱을 여러 대 띄워 같은 지갑을 쓰면 별도의 순서 보장이 필요합니다.
 
 응답의 `status`는 `SUCCESS`, `FAILED`, `PENDING` 중 하나입니다. 전송 후 `chain.receipt-timeout`(기본 2초) 동안 블록 포함을 기다리고, 그 안에 포함되지 않으면 `PENDING`을 반환합니다.
 

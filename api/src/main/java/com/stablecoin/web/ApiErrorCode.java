@@ -20,8 +20,8 @@ public enum ApiErrorCode {
 	/** 노드가 올바르지 않은 응답을 반환함 */
 	CHAIN_ERROR,
 
-	/** 서명 개인키가 설정되지 않음 */
-	SIGNER_NOT_CONFIGURED,
+	/** 앱이 from 지갑의 키를 갖고 있지 않음 */
+	UNKNOWN_SIGNER,
 
 	/** 노드의 체인 ID가 설정과 다름 */
 	CHAIN_ID_MISMATCH

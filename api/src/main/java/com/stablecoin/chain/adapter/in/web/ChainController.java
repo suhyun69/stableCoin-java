@@ -56,32 +56,30 @@ public class ChainController {
 	}
 
 	/**
-	 * 앱의 서명 지갑 주소와 잔액.
+	 * 앱이 서명할 수 있는 지갑 목록.
 	 */
-	@Operation(summary = "서명 지갑 조회", description = "전송에 쓰는 앱의 서명 지갑(chain.signer-private-key) 주소와 잔액을 조회합니다.")
+	@Operation(summary = "보낼 수 있는 지갑 조회",
+			description = "앱이 키를 갖고 있어 전송의 from으로 쓸 수 있는 지갑(anvil 기본 지갑) 목록과 잔액을 조회합니다.")
 	@ApiResponse(responseCode = "200", description = "조회 성공")
-	@ApiResponse(responseCode = "500", description = "서명 개인키가 설정되지 않음 (SIGNER_NOT_CONFIGURED)",
-			content = @Content(mediaType = "application/problem+json",
-					schema = @Schema(implementation = ProblemDetail.class)))
 	@ApiResponse(responseCode = "503", description = "노드에 연결할 수 없음 (Retry-After 헤더로 재시도 시점 안내)",
 			content = @Content(mediaType = "application/problem+json",
 					schema = @Schema(implementation = ProblemDetail.class)))
-	@GetMapping("/signer")
-	public Account getSigner() {
-		return chainQuery.getSigner();
+	@GetMapping("/signers")
+	public List<Account> getSigners() {
+		return chainQuery.getSigners();
 	}
 
 	/**
-	 * 앱의 서명 지갑에서 ETH 전송.
+	 * from 지갑에서 ETH 전송.
 	 */
 	@Operation(summary = "ETH 전송",
-			description = "앱의 서명 지갑에서 다른 지갑으로 ETH를 전송합니다. 앱이 EIP-1559 트랜잭션에 직접 서명해 eth_sendRawTransaction으로 보냅니다.")
+			description = "from 지갑에서 다른 지갑으로 ETH를 전송합니다. 앱이 from 지갑의 키로 EIP-1559 트랜잭션에 직접 서명해 eth_sendRawTransaction으로 보냅니다.")
 	@ApiResponse(responseCode = "200", description = "전송 완료")
-	@ApiResponse(responseCode = "400", description = "요청 값이 잘못되었거나 노드가 전송을 거부함 (잔액 부족 등)",
+	@ApiResponse(responseCode = "400",
+			description = "요청 값이 잘못됨, 앱이 키를 갖고 있지 않은 from (UNKNOWN_SIGNER), 노드가 전송을 거부함 (잔액 부족 등)",
 			content = @Content(mediaType = "application/problem+json",
 					schema = @Schema(implementation = ProblemDetail.class)))
-	@ApiResponse(responseCode = "500",
-			description = "서명 개인키가 설정되지 않음 (SIGNER_NOT_CONFIGURED) 또는 노드의 체인 ID가 설정과 다름 (CHAIN_ID_MISMATCH)",
+	@ApiResponse(responseCode = "500", description = "노드의 체인 ID가 설정과 다름 (CHAIN_ID_MISMATCH)",
 			content = @Content(mediaType = "application/problem+json",
 					schema = @Schema(implementation = ProblemDetail.class)))
 	@ApiResponse(responseCode = "503", description = "노드에 연결할 수 없음 (Retry-After 헤더로 재시도 시점 안내)",
@@ -89,7 +87,7 @@ public class ChainController {
 					schema = @Schema(implementation = ProblemDetail.class)))
 	@PostMapping("/transfers")
 	public Transfer transfer(@Valid @RequestBody TransferRequest request) {
-		return transferUseCase.transfer(request.to(), Eth.toWei(request.amountEth()));
+		return transferUseCase.transfer(request.from(), request.to(), Eth.toWei(request.amountEth()));
 	}
 
 	/**

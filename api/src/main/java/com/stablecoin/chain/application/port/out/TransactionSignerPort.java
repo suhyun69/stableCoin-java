@@ -1,23 +1,26 @@
 package com.stablecoin.chain.application.port.out;
 
-import com.stablecoin.chain.application.SignerNotConfiguredException;
+import java.util.List;
+
+import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.chain.domain.UnsignedTransaction;
 
 /**
- * 트랜잭션 서명에 대한 출력 포트. 구현은 개인키를 보관하고 외부로 노출하지 않는다.
- * <p>
- * 개인키가 설정되지 않았으면 모든 메서드가 {@link SignerNotConfiguredException}을 던진다.
+ * 트랜잭션 서명에 대한 출력 포트. 구현은 지갑 개인키를 보관하고 외부로 노출하지 않는다.
  */
 public interface TransactionSignerPort {
 
 	/**
-	 * 서명 지갑의 주소.
+	 * 서명할 수 있는 지갑 주소 목록.
 	 */
-	String address();
+	List<String> addresses();
+
+	boolean canSign(String address);
 
 	/**
-	 * 트랜잭션에 서명하고 노드에 보낼 hex 문자열(0x...)을 반환한다.
+	 * from 지갑의 키로 트랜잭션에 서명하고 노드에 보낼 hex 문자열(0x...)을 반환한다.
+	 * @throws UnknownSignerException from 지갑의 키가 없는 경우
 	 */
-	String sign(UnsignedTransaction transaction);
+	String sign(String from, UnsignedTransaction transaction);
 
 }

@@ -2,13 +2,17 @@ package com.stablecoin.chain.application.port.in;
 
 import java.math.BigInteger;
 
+import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.chain.domain.Transfer;
 
 /**
- * ETH 전송 입력 포트. 보내는 지갑은 앱의 서명 지갑으로 고정된다.
+ * ETH 전송 입력 포트. from은 앱이 키를 갖고 있는 지갑이어야 한다.
  */
 public interface TransferUseCase {
 
-	Transfer transfer(String to, BigInteger wei);
+	/**
+	 * @throws UnknownSignerException 앱이 from 지갑의 키를 갖고 있지 않은 경우
+	 */
+	Transfer transfer(String from, String to, BigInteger wei);
 
 }

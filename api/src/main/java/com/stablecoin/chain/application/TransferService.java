@@ -2,7 +2,10 @@ package com.stablecoin.chain.application;
 
 import java.math.BigInteger;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -16,7 +19,7 @@ import com.stablecoin.chain.domain.Transfer;
 import com.stablecoin.chain.domain.UnsignedTransaction;
 
 /**
- * 앱의 서명 지갑에서 ETH를 전송한다. nonce, 가스 한도, 수수료를 직접 채워 EIP-1559 트랜잭션에 서명한 뒤
+ * from 지갑에서 ETH를 전송한다. nonce, 가스 한도, 수수료를 직접 채워 EIP-1559 트랜잭션에 서명한 뒤
  * eth_sendRawTransaction 으로 보낸다.
  */
 @Service
@@ -36,10 +39,10 @@ public class TransferService implements TransferUseCase {
 	private final Duration receiptTimeout;
 
 	/**
-	 * 같은 nonce로 두 트랜잭션을 서명하지 않도록, nonce 조회부터 전송까지 한 번에 하나씩만 처리한다.
-	 * 이 인스턴스 안에서만 보장되며, 여러 인스턴스가 같은 지갑을 쓰면 별도의 순서 보장이 필요하다.
+	 * 같은 지갑이 같은 nonce로 두 트랜잭션을 서명하지 않도록, 지갑별로 nonce 조회부터 전송까지 한 번에 하나씩만 처리한다.
+	 * 다른 지갑끼리는 서로 기다리지 않는다. 이 인스턴스 안에서만 보장되며, 여러 인스턴스가 같은 지갑을 쓰면 별도의 순서 보장이 필요하다.
 	 */
-	private final ReentrantLock sendLock = new ReentrantLock();
+	private final ConcurrentMap<String, ReentrantLock> sendLocks = new ConcurrentHashMap<>();
 
 	public TransferService(ChainNodePort chainNode, TransactionSignerPort signer, ChainIdGuard chainIdGuard,
 			@Value("${chain.receipt-timeout:2s}") Duration receiptTimeout) {
@@ -50,10 +53,13 @@ public class TransferService implements TransferUseCase {
 	}
 
 	@Override
-	public Transfer transfer(String to, BigInteger wei) {
-		String from = signer.address();
+	public Transfer transfer(String from, String to, BigInteger wei) {
+		if (!signer.canSign(from)) {
+			throw new UnknownSignerException(from);
+		}
 		BigInteger nonce;
 		String txHash;
+		ReentrantLock sendLock = sendLocks.computeIfAbsent(from.toLowerCase(Locale.ROOT), key -> new ReentrantLock());
 		sendLock.lock();
 		try {
 			chainIdGuard.ensureVerified();
@@ -63,7 +69,7 @@ public class TransferService implements TransferUseCase {
 			BigInteger maxFee = chainNode.getLatestBaseFeePerGas().multiply(BASE_FEE_MULTIPLIER).add(maxPriorityFee);
 			UnsignedTransaction tx = new UnsignedTransaction(chainIdGuard.expectedChainId(), nonce, to, wei, gasLimit,
 					maxPriorityFee, maxFee);
-			txHash = chainNode.sendRawTransaction(signer.sign(tx));
+			txHash = chainNode.sendRawTransaction(signer.sign(from, tx));
 		}
 		finally {
 			sendLock.unlock();
