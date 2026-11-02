@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientException;
@@ -63,6 +65,17 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 				.map(error -> result.getMethodParameter().getParameterName() + ": " + error.getDefaultMessage()))
 			.sorted()
 			.collect(Collectors.joining(", "));
+		return handleExceptionInternal(ex, invalidRequest(ex.getBody(), detail), headers, status, request);
+	}
+
+	/**
+	 * 필수 헤더(Idempotency-Key 등)가 없는 경우.
+	 */
+	@Override
+	protected ResponseEntity<Object> handleServletRequestBindingException(ServletRequestBindingException ex,
+			HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+		String detail = (ex instanceof MissingRequestHeaderException missing)
+				? missing.getHeaderName() + ": 필수 헤더입니다" : ex.getBody().getDetail();
 		return handleExceptionInternal(ex, invalidRequest(ex.getBody(), detail), headers, status, request);
 	}
 

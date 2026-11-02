@@ -24,6 +24,11 @@ public interface ChainQueryUseCase {
 	List<Account> getSigners();
 
 	/**
+	 * 앱이 이 지갑의 키를 갖고 있어 보낼 수 있는지. 노드를 호출하지 않는다.
+	 */
+	boolean canSign(String address);
+
+	/**
 	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우
 	 */
 	TransactionDetail getTransaction(String txHash);

@@ -41,11 +41,13 @@ docker compose down -v     # 종료 + Postgres 데이터 삭제
 cd api && ./gradlew build
 ```
 
-실행 (기본 포트 `8080`):
+실행 (기본 포트 `8080`). Postgres와 anvil이 떠 있어야 합니다 (`docker compose up -d`):
 
 ```bash
 cd api && ./gradlew bootRun
 ```
+
+테스트는 Testcontainers로 Postgres를 직접 띄우므로 Docker가 실행 중이어야 합니다. DB 스키마는 앱이 시작할 때 Flyway(`api/src/main/resources/db/migration`)가 만듭니다.
 
 ### 설정
 
@@ -55,6 +57,9 @@ cd api && ./gradlew bootRun
 | `CHAIN_ID` | `31337` | 서명에 넣는 체인 ID. 앱 시작 시 노드의 체인 ID와 다르면 **앱이 시작되지 않습니다** |
 | `CHAIN_DEV_WALLETS_MNEMONIC` | anvil 기본 니모닉 (`test test … junk`) | 전송에 쓸 지갑 키를 계산하는 니모닉 |
 | `CHAIN_DEV_WALLETS_COUNT` | `10` | 계산할 지갑 수 |
+| `CHAIN_PAYOUT_WALLET` | anvil 0번 지갑 | 지급(`POST /api/payouts`)을 보내는 회사 지갑. 위 지갑 중 하나가 아니면 **앱이 시작되지 않습니다** |
+| `DATABASE_URL` | `jdbc:postgresql://127.0.0.1:5432/stablecoin` | DB 주소 (docker compose의 Postgres) |
+| `DATABASE_USERNAME` / `DATABASE_PASSWORD` | `stablecoin` / `stablecoin` | DB 계정 |
 
 **개인키는 설정하지 않습니다.** anvil은 기본 니모닉에서 BIP-44 경로 `m/44'/60'/0'/0/i`로 지갑 10개를 만듭니다. 앱도 시작할 때 같은 니모닉과 경로로 키를 계산해 메모리에만 두므로, anvil을 다시 띄워도 그대로 쓸 수 있습니다. 개인키는 요청, 응답, 로그 어디에도 나가지 않고, 요청에는 보내는 지갑 주소(`from`)만 넣습니다.
 
@@ -77,6 +82,8 @@ com.stablecoin.chain
     └── out/signer/          서명 어댑터 (AnvilDevWalletSigner: anvil 니모닉에서 계산한 키로 서명, web3j)
 ```
 
+`com.stablecoin.payout`(지급)도 같은 구조입니다. `PayoutRepositoryPort`(DB, JPA)와 `PayoutTransferPort`(체인 전송, chain 모듈의 `TransferUseCase` 사용)를 출력 포트로 둡니다.
+
 애플리케이션 계층은 포트(인터페이스)에만 의존하므로, 노드 통신 방식이나 서명 방식(예: 실제 네트워크용 KMS)을 바꿔도 어댑터만 교체하면 됩니다. 테스트에서는 포트를 가짜로 바꿔 노드와 개인키 없이 전송 절차를 검증합니다.
 
 ### API
@@ -87,6 +94,7 @@ com.stablecoin.chain
 | `GET` | `/api/chain/signers` | 전송의 `from`으로 쓸 수 있는 지갑(앱이 키를 가진 anvil 지갑) 목록과 잔액 |
 | `POST` | `/api/chain/transfers` | `from` 지갑에서 ETH 전송 |
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
+| `POST` | `/api/payouts` | 가맹점 지급 요청 (`Idempotency-Key` 헤더 필수) |
 | `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
 `/actuator/health`는 노드를 포함한 전체 상태를 보여줍니다.
@@ -95,7 +103,7 @@ com.stablecoin.chain
 
 | 상태 | `code` | 의미 |
 | --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 요청 값이 잘못됨. `detail`에 필드별 사유 |
+| 400 | `INVALID_REQUEST` | 요청 값이 잘못됨 또는 필수 헤더 없음. `detail`에 필드별 사유 |
 | 400 | `UNKNOWN_SIGNER` | 앱이 `from` 지갑의 키를 갖고 있지 않음 |
 | 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족 등). `detail`에 노드의 사유 |
 | 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
@@ -127,12 +135,29 @@ curl -X POST http://localhost:8080/api/chain/transfers \
 curl http://localhost:8080/api/chain/transactions/0x...
 ```
 
+### 지급 (Payout)
+
+가맹점 지급을 요청합니다. 지급을 DB에 저장(`REQUESTED`)한 뒤 지급 지갑(`CHAIN_PAYOUT_WALLET`)에서 받는 지갑으로 바로 ETH를 보내고 `202 Accepted`를 반환합니다. 금액은 DB에 wei 정수(`numeric(78,0)`)로 저장합니다.
+
+```bash
+curl -X POST http://localhost:8080/api/payouts \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: payout-2026-001' \
+  -d '{"merchantId":"merchant_demo_01","recipientAddress":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":25.5}'
+```
+
+> **알려진 문제 (일부러 남겨 둠)** — stableCoin(TS) `93ae2b3`의 `CreatePayoutNow`를 그대로 옮긴 단계입니다.
+> - **Dual Write:** ① DB 저장과 ② 체인 전송이 하나의 트랜잭션으로 묶이지 않습니다. ②가 실패하면(예: 노드 중단, `503`) DB에는 `REQUESTED`가 남지만 돈은 나가지 않습니다.
+> - **멱등성 없음:** `Idempotency-Key`를 저장만 하고 확인하지 않습니다(UNIQUE 제약도 없음). 같은 키로 재시도하면 지급이 다시 저장되고 **다시 전송됩니다.**
+>
+> 두 문제는 `CreatePayoutNowServiceTest`, `PayoutPersistenceAdapterTest`의 `knownIssue_*` 테스트에 현재 동작 그대로 기록되어 있으며, 이후 단계(멱등성, outbox)에서 고칩니다.
+
 API 문서 (springdoc-openapi, 앱 실행 후):
 
 - Swagger UI: http://localhost:8080/swagger-ui.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-`Chain` 태그에 체인 API가, `Actuator` 태그에 헬스 체크(`/actuator/health`, `/actuator/health/chain`)가 있으며 Swagger UI에서 바로 호출해 볼 수 있습니다.
+`Chain` 태그에 체인 API가, `Payout` 태그에 지급 API가, `Actuator` 태그에 헬스 체크(`/actuator/health`, `/actuator/health/chain`)가 있으며 Swagger UI에서 바로 호출해 볼 수 있습니다.
 
 ## 로컬 노드 (Anvil)
 

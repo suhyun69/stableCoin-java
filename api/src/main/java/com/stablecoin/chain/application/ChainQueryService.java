@@ -44,6 +44,11 @@ public class ChainQueryService implements ChainQueryUseCase {
 	}
 
 	@Override
+	public boolean canSign(String address) {
+		return signer.canSign(address);
+	}
+
+	@Override
 	public TransactionDetail getTransaction(String txHash) {
 		ChainTransaction tx = chainNode.getTransaction(txHash)
 			.orElseThrow(() -> new TransactionNotFoundException(txHash));

@@ -8,10 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.stablecoin.TestcontainersConfiguration;
+
 @SpringBootTest(properties = "chain.rpc-url=http://127.0.0.1:1")
+@Import(TestcontainersConfiguration.class)
 @AutoConfigureMockMvc
 class OpenApiDocsTest {
 
