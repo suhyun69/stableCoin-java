@@ -1,6 +1,33 @@
 # stableCoin-java
 Outbox, Idempotence, Dual Write
 
+## 로컬 인프라 (Docker Compose)
+
+Postgres와 로컬 이더리움 노드(anvil)를 함께 실행합니다.
+
+```bash
+docker compose up -d
+```
+
+| 서비스 | 이미지 | 주소 | 접속 정보 |
+| --- | --- | --- | --- |
+| `postgres` | `postgres:17-alpine` | `localhost:5432` | DB, 사용자, 비밀번호 모두 `stablecoin` |
+| `anvil` | `ghcr.io/foundry-rs/foundry:v1.8.7` | `http://127.0.0.1:8545` | chain id `31337`, 테스트 지갑 10개 |
+
+```bash
+docker compose ps          # 상태 확인 (둘 다 healthy면 준비 완료)
+docker compose logs -f anvil
+docker compose down        # 종료 (Postgres 데이터는 볼륨에 남음)
+docker compose down -v     # 종료 + Postgres 데이터 삭제
+```
+
+- 포트와 접속 정보는 환경 변수로 바꿀 수 있습니다: `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ANVIL_PORT`, `CHAIN_ID`
+  ```bash
+  ANVIL_PORT=8546 docker compose up -d
+  ```
+- anvil 상태는 메모리에만 있어 컨테이너를 재시작하면 초기화됩니다.
+- `./anvil/start.sh`로 띄운 anvil과 같은 8545 포트를 쓰므로 둘 중 하나만 실행하세요. 이미 실행 중이면 `./anvil/stop.sh`로 종료하거나 `ANVIL_PORT`를 바꿉니다.
+
 ## 애플리케이션 (Spring Boot)
 
 `api/` 폴더에 있습니다.
