@@ -1,6 +1,25 @@
 # stableCoin-java
 Outbox, Idempotence, Dual Write
 
+## 애플리케이션 (Spring Boot)
+
+`api/` 폴더에 있습니다.
+
+- Java 25, Spring Boot 4.0.0, Gradle
+- 패키지: `com.stablecoin`
+
+빌드 및 테스트:
+
+```bash
+cd api && ./gradlew build
+```
+
+실행 (기본 포트 `8080`):
+
+```bash
+cd api && ./gradlew bootRun
+```
+
 ## 로컬 노드 (Anvil)
 
 개발용 로컬 이더리움 노드는 [Foundry](https://github.com/foundry-rs/foundry)의 `anvil`로 실행합니다.
