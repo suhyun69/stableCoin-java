@@ -25,6 +25,7 @@ import com.stablecoin.chain.application.ChainIdMismatchException;
 import com.stablecoin.chain.application.ChainUnavailableException;
 import com.stablecoin.chain.application.TransactionNotFoundException;
 import com.stablecoin.chain.application.UnknownSignerException;
+import com.stablecoin.payout.application.IdempotencyKeyConflictException;
 
 /**
  * 모든 오류를 ProblemDetail(application/problem+json)로 반환한다. 응답의 code로 오류 종류를 구분한다.
@@ -85,6 +86,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(ChainException.class)
 	public ProblemDetail handleChainRejected(ChainException ex) {
 		return problem(HttpStatus.BAD_REQUEST, ApiErrorCode.CHAIN_REJECTED, ex.getMessage());
+	}
+
+	/**
+	 * 이미 쓴 멱등성 키로 다른 내용을 요청한 경우.
+	 */
+	@ExceptionHandler(IdempotencyKeyConflictException.class)
+	public ProblemDetail handleIdempotencyKeyConflict(IdempotencyKeyConflictException ex) {
+		return problem(HttpStatus.CONFLICT, ApiErrorCode.IDEMPOTENCY_KEY_CONFLICT, ex.getMessage());
 	}
 
 	@ExceptionHandler(TransactionNotFoundException.class)

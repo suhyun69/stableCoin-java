@@ -5,6 +5,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -20,11 +21,11 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.web.client.ResourceAccessException;
 
-import com.stablecoin.chain.application.ChainUnavailableException;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
+import com.stablecoin.payout.application.IdempotencyKeyConflictException;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
+import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutResult;
 import com.stablecoin.payout.domain.Payout;
 import com.stablecoin.payout.domain.PayoutStatus;
 
@@ -46,8 +47,7 @@ class PayoutControllerTest {
 	@Test
 	void acceptsPayoutRequest() throws Exception {
 		UUID id = UUID.randomUUID();
-		given(createPayout.create(any())).willReturn(new Payout(id, "merchant_demo_01", RECIPIENT,
-				new BigInteger("25500000000000000000"), "payout-2026-001", PayoutStatus.REQUESTED));
+		given(createPayout.create(any())).willReturn(new CreatePayoutResult(payout(id), false));
 
 		mockMvc.perform(post("/api/payouts").header("Idempotency-Key", "payout-2026-001")
 			.contentType(MediaType.APPLICATION_JSON)
@@ -58,13 +58,39 @@ class PayoutControllerTest {
 			.andExpect(jsonPath("$.amountWei").value("25500000000000000000"))
 			.andExpect(jsonPath("$.amountEth").value("25.5"))
 			.andExpect(jsonPath("$.status").value("REQUESTED"))
-			.andExpect(jsonPath("$.idempotencyKey").doesNotExist());
+			.andExpect(jsonPath("$.idempotencyKey").doesNotExist())
+			.andExpect(jsonPath("$.requestFingerprint").doesNotExist())
+			.andExpect(header().doesNotExist("Idempotent-Replayed"));
 
 		ArgumentCaptor<CreatePayoutCommand> command = ArgumentCaptor.forClass(CreatePayoutCommand.class);
 		then(createPayout).should().create(command.capture());
 		org.assertj.core.api.Assertions.assertThat(command.getValue())
 			.isEqualTo(new CreatePayoutCommand("merchant_demo_01", RECIPIENT, new BigInteger("25500000000000000000"),
 					"payout-2026-001"));
+	}
+
+	@Test
+	void replayedPayoutIsMarkedWithHeader() throws Exception {
+		UUID id = UUID.randomUUID();
+		given(createPayout.create(any())).willReturn(new CreatePayoutResult(payout(id), true));
+
+		mockMvc.perform(post("/api/payouts").header("Idempotency-Key", "payout-2026-001")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(BODY))
+			.andExpect(status().isAccepted())
+			.andExpect(header().string("Idempotent-Replayed", "true"))
+			.andExpect(jsonPath("$.id").value(id.toString()));
+	}
+
+	@Test
+	void sameKeyWithDifferentBodyReturnsConflict() throws Exception {
+		given(createPayout.create(any())).willThrow(new IdempotencyKeyConflictException("payout-2026-001"));
+
+		mockMvc.perform(post("/api/payouts").header("Idempotency-Key", "payout-2026-001")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(BODY))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
 	}
 
 	@Test
@@ -108,16 +134,9 @@ class PayoutControllerTest {
 		then(createPayout).should(never()).create(any());
 	}
 
-	@Test
-	void chainUnavailableReturnsServiceUnavailable() throws Exception {
-		given(createPayout.create(any()))
-			.willThrow(new ChainUnavailableException(new ResourceAccessException("Connection refused")));
-
-		mockMvc.perform(post("/api/payouts").header("Idempotency-Key", "k")
-			.contentType(MediaType.APPLICATION_JSON)
-			.content(BODY))
-			.andExpect(status().isServiceUnavailable())
-			.andExpect(jsonPath("$.code").value("CHAIN_UNAVAILABLE"));
+	private static Payout payout(UUID id) {
+		return new Payout(id, "merchant_demo_01", RECIPIENT, new BigInteger("25500000000000000000"),
+				"payout-2026-001", "fingerprint", PayoutStatus.REQUESTED);
 	}
 
 }

@@ -24,6 +24,9 @@ public enum ApiErrorCode {
 	UNKNOWN_SIGNER,
 
 	/** 노드의 체인 ID가 설정과 다름 */
-	CHAIN_ID_MISMATCH
+	CHAIN_ID_MISMATCH,
+
+	/** 같은 Idempotency-Key로 다른 내용을 요청함 */
+	IDEMPOTENCY_KEY_CONFLICT
 
 }

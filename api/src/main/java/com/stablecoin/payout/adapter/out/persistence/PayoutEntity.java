@@ -29,8 +29,11 @@ class PayoutEntity {
 	@Column(name = "amount_wei", nullable = false, precision = 78, scale = 0)
 	private BigInteger amountWei;
 
-	@Column(name = "idempotency_key", nullable = false)
+	@Column(name = "idempotency_key", nullable = false, unique = true)
 	private String idempotencyKey;
+
+	@Column(name = "request_fingerprint", nullable = false, length = 64)
+	private String requestFingerprint;
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20)
@@ -45,11 +48,12 @@ class PayoutEntity {
 		this.recipientAddress = payout.recipientAddress();
 		this.amountWei = payout.amountWei();
 		this.idempotencyKey = payout.idempotencyKey();
+		this.requestFingerprint = payout.requestFingerprint();
 		this.status = payout.status();
 	}
 
 	Payout toDomain() {
-		return new Payout(id, merchantId, recipientAddress, amountWei, idempotencyKey, status);
+		return new Payout(id, merchantId, recipientAddress, amountWei, idempotencyKey, requestFingerprint, status);
 	}
 
 }

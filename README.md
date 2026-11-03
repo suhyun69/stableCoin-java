@@ -82,7 +82,7 @@ com.stablecoin.chain
     └── out/signer/          서명 어댑터 (AnvilDevWalletSigner: anvil 니모닉에서 계산한 키로 서명, web3j)
 ```
 
-`com.stablecoin.payout`(지급)도 같은 구조입니다. `PayoutRepositoryPort`(DB, JPA)와 `PayoutTransferPort`(체인 전송, chain 모듈의 `TransferUseCase` 사용)를 출력 포트로 둡니다.
+`com.stablecoin.payout`(지급)도 같은 구조입니다. 출력 포트는 `PayoutRepositoryPort`, `PayoutStatusHistoryPort`(DB, JPA), `OutboxPort`(`com.stablecoin.outbox`), `PayoutTransferPort`(체인 전송, chain 모듈의 `TransferUseCase` 사용)입니다.
 
 애플리케이션 계층은 포트(인터페이스)에만 의존하므로, 노드 통신 방식이나 서명 방식(예: 실제 네트워크용 KMS)을 바꿔도 어댑터만 교체하면 됩니다. 테스트에서는 포트를 가짜로 바꿔 노드와 개인키 없이 전송 절차를 검증합니다.
 
@@ -106,6 +106,7 @@ com.stablecoin.chain
 | 400 | `INVALID_REQUEST` | 요청 값이 잘못됨 또는 필수 헤더 없음. `detail`에 필드별 사유 |
 | 400 | `UNKNOWN_SIGNER` | 앱이 `from` 지갑의 키를 갖고 있지 않음 |
 | 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족 등). `detail`에 노드의 사유 |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 다른 내용의 지급을 요청함 |
 | 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
 | 503 | `CHAIN_UNAVAILABLE` | 노드에 연결할 수 없음 (연결 거부, timeout). `Retry-After` 헤더의 초만큼 기다린 뒤 다시 시도 |
 | 502 | `CHAIN_ERROR` | 노드가 올바르지 않은 응답을 반환함 |
@@ -137,20 +138,29 @@ curl http://localhost:8080/api/chain/transactions/0x...
 
 ### 지급 (Payout)
 
-가맹점 지급을 요청합니다. 지급을 DB에 저장(`REQUESTED`)한 뒤 지급 지갑(`CHAIN_PAYOUT_WALLET`)에서 받는 지갑으로 바로 ETH를 보내고 `202 Accepted`를 반환합니다. 금액은 DB에 wei 정수(`numeric(78,0)`)로 저장합니다.
+가맹점 지급을 요청합니다. **지급(`REQUESTED`), 첫 상태 이력, 체인 전송 요청(outbox `PAYOUT_REQUESTED`)을 한 DB 트랜잭션으로 저장**하고 `202 Accepted`를 반환합니다. 셋 다 저장되거나 셋 다 저장되지 않으므로 "기록은 있는데 보낼 일이 없음" 같은 어긋남이 생기지 않습니다.
 
 ```bash
-curl -X POST http://localhost:8080/api/payouts \
+curl -i -X POST http://localhost:8080/api/payouts \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: payout-2026-001' \
   -d '{"merchantId":"merchant_demo_01","recipientAddress":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":25.5}'
 ```
 
-> **알려진 문제 (일부러 남겨 둠)** — stableCoin(TS) `93ae2b3`의 `CreatePayoutNow`를 그대로 옮긴 단계입니다.
-> - **Dual Write:** ① DB 저장과 ② 체인 전송이 하나의 트랜잭션으로 묶이지 않습니다. ②가 실패하면(예: 노드 중단, `503`) DB에는 `REQUESTED`가 남지만 돈은 나가지 않습니다.
-> - **멱등성 없음:** `Idempotency-Key`를 저장만 하고 확인하지 않습니다(UNIQUE 제약도 없음). 같은 키로 재시도하면 지급이 다시 저장되고 **다시 전송됩니다.**
->
-> 두 문제는 `CreatePayoutNowServiceTest`, `PayoutPersistenceAdapterTest`의 `knownIssue_*` 테스트에 현재 동작 그대로 기록되어 있으며, 이후 단계(멱등성, outbox)에서 고칩니다.
+**멱등성** (`Idempotency-Key` 헤더 필수)
+
+| 같은 키로 다시 요청 | 결과 |
+| --- | --- |
+| 같은 내용 (가맹점, 받는 주소, 금액. 주소 대소문자 무관) | 새로 만들지 않고 **처음 지급을 그대로** `202`로 반환, 응답 헤더 `Idempotent-Replayed: true` |
+| 다른 내용 | `409 IDEMPOTENCY_KEY_CONFLICT` |
+| 동시에 여러 번 | DB의 UNIQUE 제약으로 하나만 저장되고, 나머지는 그 지급을 돌려받음 |
+
+**테이블** (Flyway `V2__payout_history_and_outbox.sql`)
+- `payouts`: `idempotency_key` UNIQUE, `request_fingerprint`(요청 내용의 SHA-256), 상태 `REQUESTED` / `AWAITING_CONFIRMATION` / `SETTLED` / `FAILED` / `REQUIRES_REVIEW`
+- `payout_status_history`: 상태가 바뀔 때마다 한 줄 (처음: `NULL → REQUESTED`, `PAYOUT_CREATED`)
+- `outbox_messages`: 나중에 처리할 일. `PENDING` 상태로 쌓이며, payload에 받는 주소와 금액(wei)을 담음
+
+> **아직 체인으로 보내지 않습니다.** 지급 요청은 노드가 꺼져 있어도 접수되고, outbox에 `PENDING` 메시지만 쌓입니다. outbox를 읽어 실제로 전송하는 발행기는 다음 단계(stableCoin TS `65d5f9a`)에서 추가합니다. 지급 지갑 설정(`CHAIN_PAYOUT_WALLET`)과 전송 어댑터는 그때 쓰입니다.
 
 API 문서 (springdoc-openapi, 앱 실행 후):
 

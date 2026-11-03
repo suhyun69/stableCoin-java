@@ -1,6 +1,7 @@
 package com.stablecoin.payout.adapter.out.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigInteger;
 
@@ -9,12 +10,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.stablecoin.TestcontainersConfiguration;
 import com.stablecoin.payout.domain.Payout;
 
 /**
- * 실제 Postgres(Testcontainers)에 Flyway 스키마를 적용하고 매핑을 확인한다.
+ * 실제 Postgres(Testcontainers)에 Flyway 스키마를 적용하고 매핑과 제약을 확인한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -30,13 +32,14 @@ class PayoutPersistenceAdapterTest {
 	private PayoutJpaRepository repository;
 
 	@Test
-	void savesAndReadsBackPayout() {
+	void savesAndFindsByIdempotencyKey() {
 		Payout payout = Payout.requested("merchant_demo_01", RECIPIENT, new BigInteger("25500000000000000000"),
 				"payout-2026-001");
 
 		adapter.save(payout);
 
-		assertThat(repository.findById(payout.id())).get().extracting(PayoutEntity::toDomain).isEqualTo(payout);
+		assertThat(adapter.findByIdempotencyKey("payout-2026-001")).contains(payout);
+		assertThat(adapter.findByIdempotencyKey("unknown")).isEmpty();
 	}
 
 	@Test
@@ -45,19 +48,24 @@ class PayoutPersistenceAdapterTest {
 		Payout payout = Payout.requested("merchant_demo_01", RECIPIENT, uint256Max, "big");
 
 		adapter.save(payout);
-		repository.flush();
 
 		assertThat(repository.findById(payout.id()).orElseThrow().toDomain().amountWei()).isEqualTo(uint256Max);
 	}
 
 	@Test
-	void knownIssue_sameIdempotencyKeyIsStoredTwice() {
+	void sameIdempotencyKeyIsRejectedByUniqueConstraint() {
 		adapter.save(Payout.requested("merchant_demo_01", RECIPIENT, BigInteger.ONE, "payout-2026-001"));
-		adapter.save(Payout.requested("merchant_demo_01", RECIPIENT, BigInteger.ONE, "payout-2026-001"));
-		repository.flush();
 
-		// UNIQUE 제약이 없어 같은 키가 두 행으로 저장된다
-		assertThat(repository.findByIdempotencyKey("payout-2026-001")).hasSize(2);
+		assertThatThrownBy(
+				() -> adapter.save(Payout.requested("merchant_demo_01", RECIPIENT, BigInteger.ONE, "payout-2026-001")))
+			.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void nonPositiveAmountIsRejectedByCheckConstraint() {
+		assertThatThrownBy(
+				() -> adapter.save(Payout.requested("merchant_demo_01", RECIPIENT, BigInteger.ZERO, "zero")))
+			.isInstanceOf(DataIntegrityViolationException.class);
 	}
 
 }
