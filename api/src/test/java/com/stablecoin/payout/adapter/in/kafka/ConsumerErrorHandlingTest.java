@@ -41,7 +41,8 @@ import com.stablecoin.payout.application.port.in.DispatchPayoutUseCase;
  * 실제 Kafka로 소비자의 오류 분류를 확인한다: 일시 장애는 재시도, 깨진 메시지와 예상하지 못한 오류는 바로 DLT.
  */
 @SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false",
-		"payout.dispatcher.enabled=true", "payout.confirmation.interval=1h" })
+		"payout.dispatcher.enabled=true", "payout.confirmation.interval=1h",
+		"payout.dispatcher.retry.initial-interval=200ms", "payout.dispatcher.retry.max-elapsed=2s" })
 @Import(TestcontainersConfiguration.class)
 class ConsumerErrorHandlingTest {
 
@@ -68,6 +69,7 @@ class ConsumerErrorHandlingTest {
 		assertThat(dead.value()).isEqualTo("{not json");
 		assertThat(header(dead, "kafka_dlt-exception-cause-fqcn"))
 			.isEqualTo(InvalidPayoutMessageException.class.getName());
+		assertThat(header(dead, "failure-kind")).isEqualTo("PERMANENT");
 		verify(dispatchPayout, never()).dispatch(any(UUID.class), anyString());
 	}
 
@@ -77,7 +79,7 @@ class ConsumerErrorHandlingTest {
 
 		send(key, "PAYOUT_REQUESTED", "{\"messageId\":\"m\",\"payload\":{}}");
 
-		assertThat(consumeFromDlt(key)).isNotNull();
+		assertThat(header(consumeFromDlt(key), "failure-kind")).isEqualTo("PERMANENT");
 		verify(dispatchPayout, never()).dispatch(any(UUID.class), anyString());
 	}
 
@@ -91,7 +93,26 @@ class ConsumerErrorHandlingTest {
 
 		ConsumerRecord<String, String> dead = consumeFromDlt(payoutId.toString());
 		assertThat(header(dead, "kafka_dlt-exception-cause-fqcn")).isEqualTo(IllegalStateException.class.getName());
+		assertThat(header(dead, "failure-kind")).isEqualTo("REQUIRES_REVIEW");
 		verify(dispatchPayout, times(1)).dispatch(org.mockito.ArgumentMatchers.eq(payoutId), anyString());
+	}
+
+	@Test
+	void temporaryFailureThatNeverRecoversGoesToTheDeadLetterTopicAfterRetries() throws Exception {
+		UUID payoutId = UUID.randomUUID();
+		AtomicInteger calls = new AtomicInteger();
+		willAnswer(call -> {
+			calls.incrementAndGet();
+			throw new ChainUnavailableException(new ResourceAccessException("Connection refused"));
+		}).given(dispatchPayout).dispatch(org.mockito.ArgumentMatchers.eq(payoutId), anyString());
+
+		send(payoutId.toString(), "PAYOUT_REQUESTED", envelope(payoutId));
+
+		ConsumerRecord<String, String> dead = consumeFromDlt(payoutId.toString());
+		assertThat(header(dead, "failure-kind")).isEqualTo("RETRIES_EXHAUSTED");
+		assertThat(header(dead, "kafka_dlt-exception-cause-fqcn"))
+			.isEqualTo(ChainUnavailableException.class.getName());
+		assertThat(calls.get()).isGreaterThan(1);
 	}
 
 	@Test

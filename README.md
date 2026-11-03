@@ -228,13 +228,13 @@ PAYOUT_REQUESTED (Kafka)
 
 **소비자 오류 처리** (예외 종류로 분류)
 
-| 분류 | 예외 | 처리 |
-| --- | --- | --- |
-| 재시도 | 노드·DB 연결 불가, deadlock, 직렬화 실패 등 일시 장애 | 1s, 2s, 4s … (최대 30s 간격, 총 5분) 다시 처리, 그래도 안 되면 DLT |
-| 영구 실패 | 해석할 수 없는 메시지 (JSON 깨짐, `payoutId` 없음) | 바로 DLT |
-| 확인 필요 | 그 밖의 예상하지 못한 예외 | 바로 DLT |
+| 분류 | 예외 | 처리 | DLT `failure-kind` |
+| --- | --- | --- | --- |
+| 재시도 | 노드·DB 연결 불가, deadlock, 직렬화 실패 등 일시 장애 | 1s, 2s, 4s … (최대 30s 간격, 총 5분) 다시 처리, 그래도 안 되면 DLT | `RETRIES_EXHAUSTED` (원인 해결 후 그대로 다시 넣어도 됨) |
+| 영구 실패 | 해석할 수 없는 메시지 (JSON 깨짐, `payoutId` 없음) | 바로 DLT | `PERMANENT` (메시지를 고쳐야 함) |
+| 확인 필요 | 그 밖의 예상하지 못한 예외 | 바로 DLT | `REQUIRES_REVIEW` (사람이 확인) |
 
-DLT는 `stablecoin.payout.DLT`이며, 원래 메시지에 예외 정보 헤더(`kafka_dlt-exception-cause-fqcn`, `kafka_dlt-exception-message` 등)가 붙습니다. 깨진 메시지가 같은 파티션의 다른 지급을 막지 않습니다.
+DLT는 `stablecoin.payout.DLT`이며, 원래 메시지에 `failure-kind` 헤더와 예외 정보 헤더(`kafka_dlt-exception-cause-fqcn`, `kafka_dlt-exception-message` 등)가 붙습니다. 깨진 메시지가 같은 파티션의 다른 지급을 막지 않습니다. 재시도 간격은 `payout.dispatcher.retry.initial-interval` / `max-interval` / `max-elapsed`로 바꿀 수 있습니다.
 
 ```bash
 docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 \
