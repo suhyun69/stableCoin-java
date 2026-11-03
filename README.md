@@ -207,15 +207,17 @@ PAYOUT_REQUESTED (Kafka)
   → 소비자: 전송 기록 STARTED (지급마다 한 번만)
            → 서명 → 서명한 트랜잭션을 DB에 먼저 저장 (SIGNED)
            → 노드에 보냄 → 지급 AWAITING_CONFIRMATION, 전송 기록 BROADCAST
-  → 확정 확인 (2초마다): 영수증 성공 → 정산: 지급 SETTLED + 가맹점 알림 MERCHANT_PAYOUT_SETTLED (outbox → Kafka)
+  → 확정 확인 (2초마다): 확정 블록 수만큼 쌓이고 영수증 성공 + 보낸·받는 지갑과 금액 일치 → 정산: 지급 SETTLED + 가맹점 알림 MERCHANT_PAYOUT_SETTLED (outbox → Kafka)
 ```
 
 | 상황 | 지급 상태 | 전송 기록 (`payout_dispatches`) | 가맹점 알림 |
 | --- | --- | --- | --- |
 | 노드가 받음 | `AWAITING_CONFIRMATION` | `BROADCAST` | |
+| 블록에 들어갔지만 확정 블록 수(`payout.confirmation.required-confirmations`)가 아직 안 쌓임 | `AWAITING_CONFIRMATION` | `BROADCAST` | |
 | 블록에서 성공 | **`SETTLED`** | `CONFIRMED` | `MERCHANT_PAYOUT_SETTLED` |
 | 블록에서 실패 (revert) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
 | 서명할 때 노드가 거부 (잔액 부족 등, 아무것도 보내지 않음) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
+| 성공했지만 노드의 트랜잭션이 지급과 다름 (보낸 지갑, 받는 지갑, 금액) | `REQUIRES_REVIEW` (`TRANSFER_MISMATCH`) | `REQUIRES_REVIEW` | |
 | 보낼 때 노드가 거부 / 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` | `REQUIRES_REVIEW` | |
 
 **두 번 보내지 않고, 멈추지도 않게**
@@ -224,6 +226,8 @@ PAYOUT_REQUESTED (Kafka)
 - **보내기 전에 저장:** 서명한 트랜잭션(raw, hash, nonce)을 DB에 커밋한 뒤 노드에 보냅니다. 보내다 죽어도 같은 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않습니다. 노드가 이미 아는 트랜잭션이면 성공으로 봅니다.
 - **인스턴스 간 nonce 잠금:** 서명하는 트랜잭션 안에서 지급 지갑 주소로 Postgres advisory lock(`pg_advisory_xact_lock`)을 겁니다. nonce는 `max(노드 pending nonce, SIGNED 최대 nonce + 1)`이고, 잠금은 SIGNED 저장을 커밋할 때 풀리므로 앱을 여러 대 띄워도 다음 인스턴스가 방금 쓴 nonce를 봅니다. 번호를 미리 올려 두는 카운터가 아니라서 서명이 실패해도 nonce가 비지 않습니다.
 - **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
+- **확정 블록 수:** 영수증 블록을 포함해 `required-confirmations`개 블록이 쌓인 뒤에 성공(SETTLED)이나 실패(FAILED)를 정합니다. 그 전에 블록 재구성으로 영수증이 사라지면 다시 영수증을 기다립니다. anvil은 기본으로 거래가 있을 때만 블록을 만들므로, 로컬에서 2 이상으로 두면 다른 거래가 없을 때 정산이 멈춥니다 (`anvil --block-time 1`로 띄우면 됩니다).
+- **정산 전 내용 확인:** 정산하기 전에 `eth_getTransactionByHash`로 보낸 지갑, 받는 지갑, 금액이 지급과 같은지 확인합니다. 다르면 정산하지 않고 `REQUIRES_REVIEW`로 보냅니다.
 - **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
 - 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).
 
@@ -247,6 +251,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-s
 | `PAYOUT_DISPATCHER_ENABLED` | `true` | 소비자와 확정 확인 작업 실행 여부 |
 | `payout.confirmation.interval` | `2s` | 확정 확인 주기 |
 | `payout.confirmation.review-after` | `10m` | 영수증 없이 이 시간이 지나면 `REQUIRES_REVIEW` |
+| `payout.confirmation.required-confirmations` | `1` | 정산(또는 실패) 전에 쌓여야 하는 블록 수 (영수증 블록 포함, 1 이상) |
 | `payout.dispatcher.stuck-after` | `30s` | 멈춘 전송으로 보는 시간 |
 
 API 문서 (springdoc-openapi, 앱 실행 후):

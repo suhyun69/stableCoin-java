@@ -20,6 +20,9 @@ public interface ChainNodePort {
 
 	long getChainId();
 
+	/** 가장 최근 블록 번호 (eth_blockNumber) */
+	long getBlockNumber();
+
 	/**
 	 * 노드가 관리하는 지갑 목록 (anvil 기본 지갑 등).
 	 */

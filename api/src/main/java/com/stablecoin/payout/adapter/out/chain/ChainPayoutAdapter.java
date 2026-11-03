@@ -11,6 +11,7 @@ import com.stablecoin.chain.application.WalletSendLocks;
 import com.stablecoin.chain.application.port.in.ChainQueryUseCase;
 import com.stablecoin.chain.application.port.in.SendTransactionUseCase;
 import com.stablecoin.chain.domain.ChainReceipt;
+import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
 
@@ -64,6 +65,16 @@ class ChainPayoutAdapter implements PayoutChainPort {
 	@Override
 	public Optional<ChainReceipt> receipt(String txHash) {
 		return chainQuery.getReceipt(txHash);
+	}
+
+	@Override
+	public Optional<ChainTransaction> transaction(String txHash) {
+		return chainQuery.findTransaction(txHash);
+	}
+
+	@Override
+	public long latestBlockNumber() {
+		return chainQuery.getLatestBlockNumber();
 	}
 
 }

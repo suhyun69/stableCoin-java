@@ -6,6 +6,7 @@ import java.util.Optional;
 import com.stablecoin.chain.application.TransactionNotFoundException;
 import com.stablecoin.chain.domain.Account;
 import com.stablecoin.chain.domain.ChainReceipt;
+import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.chain.domain.TransactionDetail;
 
 /**
@@ -39,6 +40,16 @@ public interface ChainQueryUseCase {
 	 * 노드가 이 트랜잭션을 알고 있는지 (대기 중이거나 블록에 포함됨).
 	 */
 	boolean isKnownTransaction(String txHash);
+
+	/**
+	 * 노드에 기록된 트랜잭션 원본 (보낸 지갑, 받는 지갑, 금액 등). 노드가 모르면 비어 있다.
+	 */
+	Optional<ChainTransaction> findTransaction(String txHash);
+
+	/**
+	 * 가장 최근 블록 번호.
+	 */
+	long getLatestBlockNumber();
 
 	/**
 	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우

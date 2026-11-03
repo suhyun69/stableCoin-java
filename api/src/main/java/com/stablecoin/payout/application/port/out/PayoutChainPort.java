@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import com.stablecoin.chain.domain.ChainReceipt;
+import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.chain.domain.SignedTransaction;
 
 /**
@@ -28,5 +29,12 @@ public interface PayoutChainPort {
 	void broadcast(SignedTransaction transaction);
 
 	Optional<ChainReceipt> receipt(String txHash);
+
+	/**
+	 * 노드에 기록된 트랜잭션. 정산 전에 받는 지갑과 금액이 지급 내용과 같은지 확인할 때 쓴다.
+	 */
+	Optional<ChainTransaction> transaction(String txHash);
+
+	long latestBlockNumber();
 
 }

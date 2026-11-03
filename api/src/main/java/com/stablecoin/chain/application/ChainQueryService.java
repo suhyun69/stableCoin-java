@@ -60,6 +60,16 @@ public class ChainQueryService implements ChainQueryUseCase {
 	}
 
 	@Override
+	public Optional<ChainTransaction> findTransaction(String txHash) {
+		return chainNode.getTransaction(txHash);
+	}
+
+	@Override
+	public long getLatestBlockNumber() {
+		return chainNode.getBlockNumber();
+	}
+
+	@Override
 	public TransactionDetail getTransaction(String txHash) {
 		ChainTransaction tx = chainNode.getTransaction(txHash)
 			.orElseThrow(() -> new TransactionNotFoundException(txHash));

@@ -30,11 +30,13 @@ import com.stablecoin.TestcontainersConfiguration;
 import com.stablecoin.chain.application.ChainException;
 import com.stablecoin.chain.application.ChainUnavailableException;
 import com.stablecoin.chain.domain.ChainReceipt;
+import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
 import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
 
 /**
  * 실제 Postgres에서 지급 전송과 정산의 상태 변화를 확인한다. 체인은 가짜(PayoutChainPort)로 바꿔 끼운다.
@@ -66,6 +68,9 @@ class DispatchAndSettlementTest {
 	private PayoutDispatchStorePort dispatches;
 
 	@Autowired
+	private PayoutRepositoryPort payouts;
+
+	@Autowired
 	private CreatePayoutUseCase createPayout;
 
 	@Autowired
@@ -88,6 +93,9 @@ class DispatchAndSettlementTest {
 			return new SignedTransaction(WALLET, call.getArgument(0), call.getArgument(1), nonce, "0x02raw-" + nonce,
 					"0xhash-" + nonce);
 		});
+		// 기본: 영수증 블록(7)이 최신 블록이고, 노드의 트랜잭션은 지급 내용과 같다
+		given(chain.latestBlockNumber()).willReturn(7L);
+		given(chain.transaction(any())).willAnswer(call -> Optional.of(chainTx(call.getArgument(0), RECIPIENT, AMOUNT)));
 	}
 
 	@Test
@@ -313,12 +321,10 @@ class DispatchAndSettlementTest {
 		dispatch.dispatch(payoutId);
 		given(chain.receipt("0xhash-0")).willReturn(Optional.empty());
 
-		assertThat(new ConfirmPayoutsService(dispatches, chain, settlement, Duration.ofMinutes(10)).confirmBroadcast())
-			.isZero();
+		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isZero();
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
 
-		assertThat(new ConfirmPayoutsService(dispatches, chain, settlement, Duration.ZERO).confirmBroadcast())
-			.isEqualTo(1);
+		assertThat(confirmService(Duration.ZERO, 1).confirmBroadcast()).isEqualTo(1);
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
 		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW CONFIRMATION_TIMEOUT");
 	}
@@ -333,6 +339,91 @@ class DispatchAndSettlementTest {
 
 		then(chain).should(never()).sign(any(), any(), anyLong());
 		assertThat(jdbc.queryForObject("SELECT count(*) FROM payout_dispatches", Integer.class)).isZero();
+	}
+
+	@Test
+	void settlementWaitsForTheRequiredConfirmations() {
+		UUID payoutId = createPayout("depth-1");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
+		ConfirmPayoutsService threeBlocks = confirmService(Duration.ZERO, 3);
+
+		// 영수증 블록 7, 최신 블록 8 → 2/3
+		given(chain.latestBlockNumber()).willReturn(8L);
+		assertThat(threeBlocks.confirmBroadcast()).isZero();
+		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+
+		// 기다리는 동안 블록 재구성으로 영수증이 사라져도 실패나 확인 필요로 보내지 않고 다시 기다린다
+		given(chain.receipt("0xhash-0")).willReturn(Optional.empty());
+		assertThat(confirmService(Duration.ofMinutes(10), 3).confirmBroadcast()).isZero();
+		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+
+		// 다시 블록에 들어가고 3개 블록이 쌓이면 정산
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
+		given(chain.latestBlockNumber()).willReturn(9L);
+		assertThat(threeBlocks.confirmBroadcast()).isEqualTo(1);
+		assertThat(payout(payoutId)).containsEntry("status", "SETTLED");
+	}
+
+	@Test
+	void revertIsAlsoDecidedOnlyAfterTheRequiredConfirmations() {
+		UUID payoutId = createPayout("depth-revert");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(false)));
+		ConfirmPayoutsService threeBlocks = confirmService(Duration.ZERO, 3);
+
+		assertThat(threeBlocks.confirmBroadcast()).isZero();
+		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+
+		given(chain.latestBlockNumber()).willReturn(9L);
+		assertThat(threeBlocks.confirmBroadcast()).isEqualTo(1);
+		assertThat(payout(payoutId)).containsEntry("status", "FAILED");
+	}
+
+	@Test
+	void transactionToAnotherRecipientRequiresReviewInsteadOfSettling() {
+		UUID payoutId = createPayout("mismatch-to");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
+		given(chain.transaction("0xhash-0"))
+			.willReturn(Optional.of(chainTx("0xhash-0", "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc", AMOUNT)));
+
+		assertThat(confirm.confirmBroadcast()).isEqualTo(1);
+
+		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat((String) dispatchRow(payoutId).get("last_error")).contains("sent to 0x3c44");
+		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW TRANSFER_MISMATCH");
+		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
+	}
+
+	@Test
+	void transactionWithAnotherAmountRequiresReview() {
+		UUID payoutId = createPayout("mismatch-amount");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
+		given(chain.transaction("0xhash-0")).willReturn(Optional.of(chainTx("0xhash-0", RECIPIENT, BigInteger.ONE)));
+
+		confirm.confirmBroadcast();
+
+		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat((String) dispatchRow(payoutId).get("last_error")).contains("sent 1 wei");
+	}
+
+	@Test
+	void requiredConfirmationsMustBeAtLeastOne() {
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> confirmService(Duration.ZERO, 0))
+			.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	private ConfirmPayoutsService confirmService(Duration reviewAfter, int requiredConfirmations) {
+		return new ConfirmPayoutsService(payouts, dispatches, chain, settlement, reviewAfter, requiredConfirmations);
+	}
+
+	/** 노드에 기록된 지급 트랜잭션. 보낸 지갑은 대소문자를 바꿔 넣어 주소를 대소문자 구분 없이 비교하는지 확인한다. */
+	private static ChainTransaction chainTx(String hash, String to, BigInteger value) {
+		return new ChainTransaction(hash, WALLET.toUpperCase().replace("0X", "0x"), to, value, 0, 21000, null, 7L,
+				"0x");
 	}
 
 	private static ChainReceipt receipt(boolean success) {

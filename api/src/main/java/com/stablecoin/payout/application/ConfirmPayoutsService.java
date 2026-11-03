@@ -2,6 +2,7 @@ package com.stablecoin.payout.application;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Optional;
 
 import org.slf4j.Logger;
@@ -11,17 +12,23 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.stablecoin.chain.domain.ChainReceipt;
+import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.payout.application.port.in.ConfirmPayoutsUseCase;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
 import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
 import com.stablecoin.payout.domain.DispatchStatus;
+import com.stablecoin.payout.domain.Payout;
 import com.stablecoin.payout.domain.PayoutDispatch;
 import com.stablecoin.payout.domain.PayoutStatus;
 
 /**
  * 노드에 보낸(BROADCAST) 지급 트랜잭션의 영수증을 확인한다.
  * <ul>
- * <li>성공 → 정산 (SETTLED, 가맹점 알림 MERCHANT_PAYOUT_SETTLED)</li>
+ * <li>영수증 블록 위로 required-confirmations 개 블록이 쌓일 때까지(영수증 블록 포함) 기다린다. 그 전에 블록 재구성으로
+ * 영수증이 사라지면 다시 영수증을 기다린다.</li>
+ * <li>성공 → 노드에 기록된 트랜잭션의 보낸 지갑, 받는 지갑, 금액이 지급 내용과 같으면 정산
+ * (SETTLED, 가맹점 알림 MERCHANT_PAYOUT_SETTLED). 다르면 REQUIRES_REVIEW.</li>
  * <li>실패(revert) → FAILED (가맹점 알림 MERCHANT_PAYOUT_FAILED)</li>
  * <li>review-after 가 지나도 영수증이 없음 → REQUIRES_REVIEW (돈이 나갔는지 사람이 확인)</li>
  * </ul>
@@ -33,6 +40,8 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 
 	private static final int BATCH = 50;
 
+	private final PayoutRepositoryPort payouts;
+
 	private final PayoutDispatchStorePort dispatches;
 
 	private final PayoutChainPort chain;
@@ -41,12 +50,21 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 
 	private final Duration reviewAfter;
 
-	public ConfirmPayoutsService(PayoutDispatchStorePort dispatches, PayoutChainPort chain,
-			PayoutSettlementService settlement, @Value("${payout.confirmation.review-after:10m}") Duration reviewAfter) {
+	private final int requiredConfirmations;
+
+	public ConfirmPayoutsService(PayoutRepositoryPort payouts, PayoutDispatchStorePort dispatches,
+			PayoutChainPort chain, PayoutSettlementService settlement,
+			@Value("${payout.confirmation.review-after:10m}") Duration reviewAfter,
+			@Value("${payout.confirmation.required-confirmations:1}") int requiredConfirmations) {
+		if (requiredConfirmations < 1) {
+			throw new IllegalArgumentException("payout.confirmation.required-confirmations must be at least 1");
+		}
+		this.payouts = payouts;
 		this.dispatches = dispatches;
 		this.chain = chain;
 		this.settlement = settlement;
 		this.reviewAfter = reviewAfter;
+		this.requiredConfirmations = requiredConfirmations;
 	}
 
 	@Override
@@ -63,8 +81,23 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 	private boolean confirm(PayoutDispatch dispatch) {
 		Optional<ChainReceipt> receipt = chain.receipt(dispatch.txHash());
 		if (receipt.isPresent()) {
-			return receipt.get().success() ? settlement.settle(dispatch.payoutId(), dispatch.txHash())
-					: settlement.failOnChain(dispatch.payoutId(), dispatch.txHash());
+			long confirmations = chain.latestBlockNumber() - receipt.get().blockNumber() + 1;
+			if (confirmations < requiredConfirmations) {
+				log.debug("Payout {} transaction {} has {}/{} confirmations", dispatch.payoutId(), dispatch.txHash(),
+						confirmations, requiredConfirmations);
+				return false;
+			}
+			if (!receipt.get().success()) {
+				return settlement.failOnChain(dispatch.payoutId(), dispatch.txHash());
+			}
+			String mismatch = mismatch(dispatch);
+			if (mismatch != null) {
+				log.error("Payout {} transaction {} does not match the payout: {}", dispatch.payoutId(),
+						dispatch.txHash(), mismatch);
+				return settlement.requireReview(dispatch.payoutId(), PayoutStatus.AWAITING_CONFIRMATION,
+						DispatchStatus.BROADCAST, "TRANSFER_MISMATCH", mismatch);
+			}
+			return settlement.settle(dispatch.payoutId(), dispatch.txHash());
 		}
 		if (dispatch.updatedAt() != null && dispatch.updatedAt().plus(reviewAfter).isBefore(Instant.now())) {
 			log.warn("Payout {} transaction {} has no receipt after {}; requires review", dispatch.payoutId(),
@@ -73,6 +106,34 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 					DispatchStatus.BROADCAST, "CONFIRMATION_TIMEOUT", "no receipt after " + reviewAfter);
 		}
 		return false;
+	}
+
+	/**
+	 * 노드에 기록된 트랜잭션이 지급 내용(지급 지갑 → 받는 지갑, 금액)과 다르면 그 이유, 같으면 null.
+	 */
+	private String mismatch(PayoutDispatch dispatch) {
+		Payout payout = payouts.findById(dispatch.payoutId()).orElse(null);
+		if (payout == null) {
+			return "payout not found";
+		}
+		ChainTransaction tx = chain.transaction(dispatch.txHash()).orElse(null);
+		if (tx == null) {
+			return "transaction not found on the node";
+		}
+		if (!sameAddress(tx.from(), dispatch.fromAddress())) {
+			return "sent from " + tx.from() + ", expected " + dispatch.fromAddress();
+		}
+		if (!sameAddress(tx.to(), payout.recipientAddress())) {
+			return "sent to " + tx.to() + ", expected " + payout.recipientAddress();
+		}
+		if (!payout.amountWei().equals(tx.value())) {
+			return "sent " + tx.value() + " wei, expected " + payout.amountWei();
+		}
+		return null;
+	}
+
+	private static boolean sameAddress(String a, String b) {
+		return a != null && b != null && a.toLowerCase(Locale.ROOT).equals(b.toLowerCase(Locale.ROOT));
 	}
 
 }

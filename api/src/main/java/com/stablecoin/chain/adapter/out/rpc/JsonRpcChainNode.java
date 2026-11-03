@@ -40,6 +40,11 @@ public class JsonRpcChainNode implements ChainNodePort {
 	}
 
 	@Override
+	public long getBlockNumber() {
+		return Eth.fromHexLong(call("eth_blockNumber", List.of(), STRING));
+	}
+
+	@Override
 	public List<String> getAccounts() {
 		return call("eth_accounts", List.of(), new ParameterizedTypeReference<JsonRpcResponse<List<String>>>() {});
 	}
