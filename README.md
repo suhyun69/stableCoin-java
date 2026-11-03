@@ -219,11 +219,27 @@ PAYOUT_REQUESTED (Kafka)
 | 보낼 때 노드가 거부 / 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` | `REQUIRES_REVIEW` | |
 
 **두 번 보내지 않고, 멈추지도 않게**
-- **지급마다 한 번만:** `payout_dispatches.payout_id`가 UNIQUE라 같은 이벤트가 여러 번 와도(메시지 ID가 달라도) 전송은 한 번만 진행합니다.
+- **메시지마다 한 번만 (inbox):** 받은 메시지를 `processed_messages`(`consumer_name`, `message_id`)에 기록하고, 같은 트랜잭션에서 전송 기록(`STARTED`)을 만듭니다. 같은 메시지를 다시 받으면 건너뜁니다.
+- **지급마다 한 번만:** `payout_dispatches.payout_id`가 UNIQUE라 메시지 ID가 달라도 전송은 한 번만 진행합니다.
 - **보내기 전에 저장:** 서명한 트랜잭션(raw, hash, nonce)을 DB에 커밋한 뒤 노드에 보냅니다. 보내다 죽어도 같은 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않습니다. 노드가 이미 아는 트랜잭션이면 성공으로 봅니다.
 - **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
 - **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
 - 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).
+
+**소비자 오류 처리** (예외 종류로 분류)
+
+| 분류 | 예외 | 처리 |
+| --- | --- | --- |
+| 재시도 | 노드·DB 연결 불가, deadlock, 직렬화 실패 등 일시 장애 | 1s, 2s, 4s … (최대 30s 간격, 총 5분) 다시 처리, 그래도 안 되면 DLT |
+| 영구 실패 | 해석할 수 없는 메시지 (JSON 깨짐, `payoutId` 없음) | 바로 DLT |
+| 확인 필요 | 그 밖의 예상하지 못한 예외 | 바로 DLT |
+
+DLT는 `stablecoin.payout.DLT`이며, 원래 메시지에 예외 정보 헤더(`kafka_dlt-exception-cause-fqcn`, `kafka_dlt-exception-message` 등)가 붙습니다. 깨진 메시지가 같은 파티션의 다른 지급을 막지 않습니다.
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 \
+  --topic stablecoin.payout.DLT --from-beginning --property print.headers=true
+```
 
 | 설정 | 기본값 | 설명 |
 | --- | --- | --- |

@@ -77,6 +77,7 @@ class DispatchAndSettlementTest {
 	@SuppressWarnings("unchecked")
 	void setUp() {
 		jdbc.update("DELETE FROM outbox_messages");
+		jdbc.update("DELETE FROM processed_messages");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
@@ -107,6 +108,76 @@ class DispatchAndSettlementTest {
 			.containsEntry("from_address", WALLET);
 		assertThat(history(payoutId)).containsExactly("NULL->REQUESTED PAYOUT_CREATED",
 				"REQUESTED->AWAITING_CONFIRMATION TRANSACTION_BROADCAST");
+	}
+
+	@Test
+	void sameMessageIsProcessedOnce() {
+		UUID payoutId = createPayout("inbox-1");
+
+		dispatch.dispatch(payoutId, "out-1");
+		dispatch.dispatch(payoutId, "out-1");
+
+		then(chain).should(times(1)).sign(any(), any(), anyLong());
+		assertThat(jdbc.queryForList("""
+				SELECT consumer_name || ' ' || message_id FROM processed_messages WHERE payout_id = ?""", String.class,
+				payoutId))
+			.containsExactly("payout-requested out-1");
+	}
+
+	@Test
+	void tenConcurrentDeliveriesOfTheSameMessageStartOneDispatch() throws Exception {
+		UUID payoutId = createPayout("inbox-concurrent");
+		List<java.util.concurrent.CompletableFuture<Void>> deliveries = new java.util.ArrayList<>();
+		java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+		for (int i = 0; i < 10; i++) {
+			deliveries.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+				try {
+					start.await();
+				}
+				catch (InterruptedException ex) {
+					throw new IllegalStateException(ex);
+				}
+				dispatch.dispatch(payoutId, "out-concurrent");
+			}));
+		}
+		start.countDown();
+		for (java.util.concurrent.CompletableFuture<Void> delivery : deliveries) {
+			delivery.get();
+		}
+
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM processed_messages WHERE payout_id = ?", Integer.class,
+				payoutId))
+			.isEqualTo(1);
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM payout_dispatches WHERE payout_id = ?", Integer.class,
+				payoutId))
+			.isEqualTo(1);
+		then(chain).should(times(1)).sign(any(), any(), anyLong());
+		then(chain).should(times(1)).broadcast(any());
+	}
+
+	@Test
+	void redeliveredMessageIsSkippedAndTheStuckDispatchIsResumed() {
+		UUID payoutId = createPayout("inbox-redelivery");
+		org.mockito.Mockito.doThrow(new ChainUnavailableException(new ResourceAccessException("Connection refused")))
+			.doNothing()
+			.when(chain)
+			.broadcast(any());
+		try {
+			dispatch.dispatch(payoutId, "out-redelivery");
+		}
+		catch (ChainUnavailableException expected) {
+			// 서명까지 하고 보내지 못함
+		}
+
+		// Kafka가 같은 메시지를 다시 줘도 건너뛴다
+		dispatch.dispatch(payoutId, "out-redelivery");
+		then(chain).should(times(1)).broadcast(any());
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "SIGNED");
+
+		// 멈춘 전송은 재개 작업이 이어간다
+		dispatch.resumeStuck();
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST");
+		then(chain).should(times(1)).sign(any(), any(), anyLong());
 	}
 
 	@Test

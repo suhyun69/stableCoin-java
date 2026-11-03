@@ -18,6 +18,7 @@ import com.stablecoin.payout.application.port.in.DispatchPayoutUseCase;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
 import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
+import com.stablecoin.payout.application.port.out.ProcessedMessagePort;
 import com.stablecoin.payout.domain.DispatchStatus;
 import com.stablecoin.payout.domain.Payout;
 import com.stablecoin.payout.domain.PayoutDispatch;
@@ -26,8 +27,8 @@ import com.stablecoin.payout.domain.PayoutStatus;
 /**
  * 지급을 체인으로 보낸다 (PAYOUT_REQUESTED 소비자).
  * <ol>
- * <li><b>한 번만 시작:</b> payout_dispatches 에 지급마다 한 행만 만든다 (지급 ID UNIQUE). 같은 이벤트가 여러 번 와도,
- * 메시지 ID가 달라도 한 번만 진행한다.</li>
+ * <li><b>한 번만 시작:</b> 받은 메시지를 inbox(processed_messages)에 기록하고, 같은 트랜잭션에서 payout_dispatches 에
+ * 지급마다 한 행만 만든다 (지급 ID UNIQUE). 같은 메시지를 다시 받으면 건너뛰고, 메시지 ID가 달라도 전송은 한 번만 진행한다.</li>
  * <li><b>보내기 전에 저장:</b> 서명한 트랜잭션(raw, hash, nonce)을 먼저 DB에 커밋(SIGNED)한 뒤 노드에 보낸다.
  * 보내다가 죽어도 같은 서명 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않는다.</li>
  * <li><b>보낸 뒤 기록:</b> 노드가 받으면 지급 AWAITING_CONFIRMATION, 전송 기록 BROADCAST.</li>
@@ -42,11 +43,16 @@ public class DispatchPayoutService implements DispatchPayoutUseCase {
 
 	private static final int RESUME_BATCH = 20;
 
+	/** processed_messages.consumer_name */
+	static final String CONSUMER_NAME = "payout-requested";
+
 	private final PayoutRepositoryPort payouts;
 
 	private final PayoutDispatchStorePort dispatches;
 
 	private final PayoutChainPort chain;
+
+	private final ProcessedMessagePort inbox;
 
 	private final PayoutSettlementService settlement;
 
@@ -55,28 +61,66 @@ public class DispatchPayoutService implements DispatchPayoutUseCase {
 	private final Duration stuckAfter;
 
 	public DispatchPayoutService(PayoutRepositoryPort payouts, PayoutDispatchStorePort dispatches, PayoutChainPort chain,
-			PayoutSettlementService settlement, PlatformTransactionManager transactionManager,
+			ProcessedMessagePort inbox, PayoutSettlementService settlement,
+			PlatformTransactionManager transactionManager,
 			@Value("${payout.dispatcher.stuck-after:30s}") Duration stuckAfter) {
 		this.payouts = payouts;
 		this.dispatches = dispatches;
 		this.chain = chain;
+		this.inbox = inbox;
 		this.settlement = settlement;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.stuckAfter = stuckAfter;
 	}
 
 	@Override
-	public void dispatch(UUID payoutId) {
-		Payout payout = payouts.findById(payoutId).orElse(null);
+	public void dispatch(UUID payoutId, String messageId) {
+		Payout payout = requested(payoutId);
 		if (payout == null) {
-			log.warn("Payout {} not found; skipping dispatch", payoutId);
 			return;
 		}
-		if (payout.status() != PayoutStatus.REQUESTED) {
-			log.debug("Payout {} is already {}; skipping dispatch", payoutId, payout.status());
+		Boolean firstDelivery = transaction.execute(status -> {
+			if (!inbox.markProcessed(CONSUMER_NAME, messageId, payoutId)) {
+				return false;
+			}
+			dispatches.startOnce(payoutId);
+			return true;
+		});
+		if (!Boolean.TRUE.equals(firstDelivery)) {
+			// 이미 처리한 메시지. 그때 멈춘 전송이 있으면 재개 작업이 이어간다.
+			log.info("Message {} for payout {} was already processed; skipping", messageId, payoutId);
+			return;
+		}
+		send(payout);
+	}
+
+	@Override
+	public void dispatch(UUID payoutId) {
+		Payout payout = requested(payoutId);
+		if (payout == null) {
 			return;
 		}
 		dispatches.startOnce(payoutId);
+		send(payout);
+	}
+
+	/**
+	 * 아직 보내지 않은(REQUESTED) 지급이면 돌려주고, 없거나 이미 처리됐으면 null.
+	 */
+	private Payout requested(UUID payoutId) {
+		Payout payout = payouts.findById(payoutId).orElse(null);
+		if (payout == null) {
+			log.warn("Payout {} not found; skipping dispatch", payoutId);
+			return null;
+		}
+		if (payout.status() != PayoutStatus.REQUESTED) {
+			log.debug("Payout {} is already {}; skipping dispatch", payoutId, payout.status());
+			return null;
+		}
+		return payout;
+	}
+
+	private void send(Payout payout) {
 		chain.withPayoutWalletLock(() -> {
 			sendLocked(payout);
 			return null;

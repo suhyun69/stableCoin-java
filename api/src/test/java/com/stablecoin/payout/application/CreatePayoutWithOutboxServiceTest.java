@@ -61,6 +61,7 @@ class CreatePayoutWithOutboxServiceTest {
 	@BeforeEach
 	void cleanTables() {
 		jdbc.update("DELETE FROM outbox_messages");
+		jdbc.update("DELETE FROM processed_messages");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
