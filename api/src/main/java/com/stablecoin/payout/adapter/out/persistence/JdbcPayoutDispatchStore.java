@@ -71,6 +71,12 @@ class JdbcPayoutDispatchStore implements PayoutDispatchStorePort {
 	}
 
 	@Override
+	public void lockWalletForSigning(String fromAddress) {
+		// 트랜잭션 단위 advisory lock: 커밋·롤백할 때 저절로 풀리고, 테이블이 따로 필요 없다
+		jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(lower(?), 0))", rs -> null, fromAddress);
+	}
+
+	@Override
 	public long nextNonceFloor(String fromAddress) {
 		Long max = jdbc.queryForObject("""
 				SELECT max(nonce) FROM payout_dispatches WHERE status = 'SIGNED' AND lower(from_address) = lower(?)""",

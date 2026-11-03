@@ -134,7 +134,7 @@ curl -X POST http://localhost:8080/api/chain/transfers \
   -d '{"from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":1.5}'
 ```
 
-응답의 `nonce`는 이 전송에 쓴 nonce입니다. 같은 지갑이 같은 nonce를 두 번 쓰지 않도록 앱 인스턴스 안에서는 **지갑별로** 전송을 한 번에 하나씩 서명하고 보냅니다 (다른 지갑끼리는 동시에 처리). 앱을 여러 대 띄워 같은 지갑을 쓰면 별도의 순서 보장이 필요합니다.
+응답의 `nonce`는 이 전송에 쓴 nonce입니다. 같은 지갑이 같은 nonce를 두 번 쓰지 않도록 앱 인스턴스 안에서는 **지갑별로** 전송을 한 번에 하나씩 서명하고 보냅니다 (다른 지갑끼리는 동시에 처리). 이 `/transfers` 잠금은 앱 인스턴스 안에서만 걸리므로, 앱을 여러 대 띄워 같은 지갑으로 전송하면 별도의 순서 보장이 필요합니다 (지급은 아래처럼 DB 잠금을 씁니다).
 
 응답의 `status`는 `SUCCESS`, `FAILED`, `PENDING` 중 하나입니다. 전송 후 `chain.receipt-timeout`(기본 2초) 동안 블록 포함을 기다리고, 그 안에 포함되지 않으면 `PENDING`을 반환합니다.
 
@@ -222,6 +222,7 @@ PAYOUT_REQUESTED (Kafka)
 - **메시지마다 한 번만 (inbox):** 받은 메시지를 `processed_messages`(`consumer_name`, `message_id`)에 기록하고, 같은 트랜잭션에서 전송 기록(`STARTED`)을 만듭니다. 같은 메시지를 다시 받으면 건너뜁니다.
 - **지급마다 한 번만:** `payout_dispatches.payout_id`가 UNIQUE라 메시지 ID가 달라도 전송은 한 번만 진행합니다.
 - **보내기 전에 저장:** 서명한 트랜잭션(raw, hash, nonce)을 DB에 커밋한 뒤 노드에 보냅니다. 보내다 죽어도 같은 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않습니다. 노드가 이미 아는 트랜잭션이면 성공으로 봅니다.
+- **인스턴스 간 nonce 잠금:** 서명하는 트랜잭션 안에서 지급 지갑 주소로 Postgres advisory lock(`pg_advisory_xact_lock`)을 겁니다. nonce는 `max(노드 pending nonce, SIGNED 최대 nonce + 1)`이고, 잠금은 SIGNED 저장을 커밋할 때 풀리므로 앱을 여러 대 띄워도 다음 인스턴스가 방금 쓴 nonce를 봅니다. 번호를 미리 올려 두는 카운터가 아니라서 서명이 실패해도 nonce가 비지 않습니다.
 - **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
 - **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
 - 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).

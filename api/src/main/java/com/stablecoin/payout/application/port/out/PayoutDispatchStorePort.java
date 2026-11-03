@@ -39,6 +39,12 @@ public interface PayoutDispatchStorePort {
 	boolean transition(UUID payoutId, DispatchStatus expected, DispatchStatus next, String error);
 
 	/**
+	 * 이 지갑으로 서명하는 동안 다른 앱 인스턴스가 같은 지갑으로 서명하지 못하게 DB 잠금을 건다.
+	 * 호출한 트랜잭션이 끝나면(방금 저장한 SIGNED 가 다른 인스턴스에 보일 때) 풀린다.
+	 */
+	void lockWalletForSigning(String fromAddress);
+
+	/**
 	 * 서명만 하고 아직 노드에 보내지 못한(SIGNED) 트랜잭션이 쓰고 있는 nonce 다음 값. 없으면 0.
 	 * 새 트랜잭션이 같은 nonce를 쓰지 않게 한다.
 	 */

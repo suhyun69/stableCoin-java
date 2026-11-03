@@ -164,6 +164,8 @@ public class DispatchPayoutService implements DispatchPayoutUseCase {
 		PayoutDispatch dispatch = dispatches.findForUpdate(payout.id()).orElseThrow();
 		return switch (dispatch.status()) {
 			case STARTED -> {
+				// JVM 잠금은 이 인스턴스 안에서만 막으므로, 다른 인스턴스와는 DB 잠금으로 nonce가 겹치지 않게 한다
+				dispatches.lockWalletForSigning(chain.payoutWallet());
 				long minNonce = dispatches.nextNonceFloor(chain.payoutWallet());
 				SignedTransaction signed = chain.sign(payout.recipientAddress(), payout.amountWei(), minNonce);
 				dispatches.markSigned(payout.id(), signed);
