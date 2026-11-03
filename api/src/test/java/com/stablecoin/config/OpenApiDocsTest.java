@@ -14,7 +14,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.stablecoin.TestcontainersConfiguration;
 
-@SpringBootTest(properties = "chain.rpc-url=http://127.0.0.1:1")
+@SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false" })
 @Import(TestcontainersConfiguration.class)
 @AutoConfigureMockMvc
 class OpenApiDocsTest {

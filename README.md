@@ -3,7 +3,7 @@ Outbox, Idempotence, Dual Write
 
 ## 로컬 인프라 (Docker Compose)
 
-Postgres와 로컬 이더리움 노드(anvil)를 함께 실행합니다.
+Postgres, 로컬 이더리움 노드(anvil), Kafka를 함께 실행합니다.
 
 ```bash
 docker compose up -d
@@ -13,6 +13,7 @@ docker compose up -d
 | --- | --- | --- | --- |
 | `postgres` | `postgres:17-alpine` | `localhost:5432` | DB, 사용자, 비밀번호 모두 `stablecoin` |
 | `anvil` | `ghcr.io/foundry-rs/foundry:v1.8.7` | `http://127.0.0.1:8545` | chain id `31337`, 테스트 지갑 10개 |
+| `kafka` | `apache/kafka:4.1.1` | 호스트: `localhost:9092`, 컨테이너끼리: `kafka:29092` | 단일 노드 KRaft (ZooKeeper 없음). 데이터는 컨테이너 안에만 있어 `down` 하면 지워짐 |
 
 ```bash
 docker compose ps          # 상태 확인 (둘 다 healthy면 준비 완료)
@@ -21,7 +22,12 @@ docker compose down        # 종료 (Postgres 데이터는 볼륨에 남음)
 docker compose down -v     # 종료 + Postgres 데이터 삭제
 ```
 
-- 포트와 접속 정보는 환경 변수로 바꿀 수 있습니다: `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ANVIL_PORT`, `CHAIN_ID`
+- 포트와 접속 정보는 환경 변수로 바꿀 수 있습니다: `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ANVIL_PORT`, `CHAIN_ID`, `KAFKA_PORT`
+- Kafka 메시지 확인 (컨테이너 안의 CLI는 내부 주소 `kafka:29092`로 접속):
+  ```bash
+  docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 \
+    --topic stablecoin.payout --from-beginning --property print.key=true --property print.headers=true
+  ```
   ```bash
   ANVIL_PORT=8546 docker compose up -d
   ```
@@ -41,13 +47,13 @@ docker compose down -v     # 종료 + Postgres 데이터 삭제
 cd api && ./gradlew build
 ```
 
-실행 (기본 포트 `8080`). Postgres와 anvil이 떠 있어야 합니다 (`docker compose up -d`):
+실행 (기본 포트 `8080`). Postgres, anvil, Kafka가 떠 있어야 합니다 (`docker compose up -d`):
 
 ```bash
 cd api && ./gradlew bootRun
 ```
 
-테스트는 Testcontainers로 Postgres를 직접 띄우므로 Docker가 실행 중이어야 합니다. DB 스키마는 앱이 시작할 때 Flyway(`api/src/main/resources/db/migration`)가 만듭니다.
+테스트는 Testcontainers로 Postgres와 Kafka를 직접 띄우므로 Docker가 실행 중이어야 합니다. DB 스키마는 앱이 시작할 때 Flyway(`api/src/main/resources/db/migration`)가 만듭니다.
 
 ### 설정
 
@@ -60,6 +66,8 @@ cd api && ./gradlew bootRun
 | `CHAIN_PAYOUT_WALLET` | anvil 0번 지갑 | 지급(`POST /api/payouts`)을 보내는 회사 지갑. 위 지갑 중 하나가 아니면 **앱이 시작되지 않습니다** |
 | `DATABASE_URL` | `jdbc:postgresql://127.0.0.1:5432/stablecoin` | DB 주소 (docker compose의 Postgres) |
 | `DATABASE_USERNAME` / `DATABASE_PASSWORD` | `stablecoin` / `stablecoin` | DB 계정 |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka 주소 |
+| `OUTBOX_PUBLISHER_ENABLED` | `true` | outbox 발행기 실행 여부 |
 
 **개인키는 설정하지 않습니다.** anvil은 기본 니모닉에서 BIP-44 경로 `m/44'/60'/0'/0/i`로 지갑 10개를 만듭니다. 앱도 시작할 때 같은 니모닉과 경로로 키를 계산해 메모리에만 두므로, anvil을 다시 띄워도 그대로 쓸 수 있습니다. 개인키는 요청, 응답, 로그 어디에도 나가지 않고, 요청에는 보내는 지갑 주소(`from`)만 넣습니다.
 
@@ -160,7 +168,37 @@ curl -i -X POST http://localhost:8080/api/payouts \
 - `payout_status_history`: 상태가 바뀔 때마다 한 줄 (처음: `NULL → REQUESTED`, `PAYOUT_CREATED`)
 - `outbox_messages`: 나중에 처리할 일. `PENDING` 상태로 쌓이며, payload에 받는 주소와 금액(wei)을 담음
 
-> **아직 체인으로 보내지 않습니다.** 지급 요청은 노드가 꺼져 있어도 접수되고, outbox에 `PENDING` 메시지만 쌓입니다. outbox를 읽어 실제로 전송하는 발행기는 다음 단계(stableCoin TS `65d5f9a`)에서 추가합니다. 지급 지갑 설정(`CHAIN_PAYOUT_WALLET`)과 전송 어댑터는 그때 쓰입니다.
+### outbox 발행기 (Kafka)
+
+앱 안의 발행기가 1초마다 `PENDING` outbox 메시지를 잡아 Kafka로 보내고, Kafka가 받았다고 확인(`acks=all`)하면 `PUBLISHED`로 바꿉니다.
+
+```
+POST /api/payouts ─(한 트랜잭션)→ payouts + history + outbox(PENDING)
+발행기 ─ claim (FOR UPDATE SKIP LOCKED, 30초 임대) → Kafka 발행 → outbox PUBLISHED
+```
+
+| 항목 | 값 |
+| --- | --- |
+| 토픽 | `stablecoin.payout` (파티션 3) |
+| 키 | 지급 ID. 같은 지급의 이벤트는 같은 파티션으로 가서 순서가 지켜짐 |
+| 헤더 | `outbox-message-id`, `event-type` (`PAYOUT_REQUESTED`) |
+| 값 | `{"messageId", "type", "aggregateType", "aggregateId", "payload": {"payoutId", "recipientAddress", "amountWei"}}` |
+
+`outbox_messages`에서 바뀌는 값:
+
+| 단계 | `status` | `attempts` | `locked_at` / `locked_by` | 그 밖 |
+| --- | --- | --- | --- | --- |
+| 지급 요청 | `PENDING` | 0 | NULL | |
+| 발행기가 잡음 | `PENDING` | +1 | 잡은 시각 / 워커 ID | |
+| 발행 성공 | **`PUBLISHED`** | 그대로 | NULL | `published_at` 기록, `last_error` 지움 |
+| 발행 실패 | `PENDING` | 그대로 | NULL | `last_error` 기록, `available_at`을 1s → 2s → 4s … (최대 5분) 뒤로 |
+| `max-attempts`(10)번 실패 | **`FAILED`** | | NULL | 더 이상 시도하지 않음 |
+
+- **여러 워커:** `SKIP LOCKED`로 같은 메시지를 두 워커가 잡지 않습니다. 잡은 워커가 죽으면 30초(`outbox.publisher.lease`) 뒤 다른 워커가 다시 잡습니다.
+- **중복 가능 (at-least-once):** Kafka 발행 후 `PUBLISHED`로 바꾸기 전에 죽으면 같은 메시지가 다시 발행됩니다. 받는 쪽은 `outbox-message-id`로 중복을 걸러야 합니다.
+- 한 메시지가 실패해도 같은 묶음의 나머지는 계속 발행합니다.
+
+> **아직 체인으로 보내지 않습니다.** 이벤트를 받아 실제로 지급을 보내는 소비자(consumer)는 아직 없어서, `payouts.status`는 `REQUESTED`로 남습니다. 지급 지갑 설정(`CHAIN_PAYOUT_WALLET`)과 전송 어댑터는 소비자를 만들 때 쓰입니다.
 
 API 문서 (springdoc-openapi, 앱 실행 후):
 
