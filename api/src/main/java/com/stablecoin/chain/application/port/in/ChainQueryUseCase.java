@@ -52,6 +52,11 @@ public interface ChainQueryUseCase {
 	long getLatestBlockNumber();
 
 	/**
+	 * 이 지갑에서 블록에 들어간 트랜잭션 수. 이보다 작은 nonce는 모두 이미 쓰였다.
+	 */
+	long getConfirmedNonce(String address);
+
+	/**
 	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우
 	 */
 	TransactionDetail getTransaction(String txHash);

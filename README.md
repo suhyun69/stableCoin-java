@@ -103,6 +103,7 @@ com.stablecoin.chain
 | `POST` | `/api/chain/transfers` | `from` 지갑에서 ETH 전송 |
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
 | `POST` | `/api/payouts` | 가맹점 지급 요청 (`Idempotency-Key` 헤더 필수) |
+| `GET` | `/api/payouts/{payoutId}` | 지급 상태와 체인 전송 기록 조회 |
 | `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
 `/actuator/health`는 노드를 포함한 전체 상태를 보여줍니다.
@@ -115,6 +116,7 @@ com.stablecoin.chain
 | 400 | `UNKNOWN_SIGNER` | 앱이 `from` 지갑의 키를 갖고 있지 않음 |
 | 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족 등). `detail`에 노드의 사유 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 다른 내용의 지급을 요청함 |
+| 404 | `PAYOUT_NOT_FOUND` | 해당 지급이 없음 |
 | 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
 | 503 | `CHAIN_UNAVAILABLE` | 노드에 연결할 수 없음 (연결 거부, timeout). `Retry-After` 헤더의 초만큼 기다린 뒤 다시 시도 |
 | 502 | `CHAIN_ERROR` | 노드가 올바르지 않은 응답을 반환함 |
@@ -153,6 +155,18 @@ curl -i -X POST http://localhost:8080/api/payouts \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: payout-2026-001' \
   -d '{"merchantId":"merchant_demo_01","recipientAddress":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":25.5}'
+```
+
+응답의 `id`로 지급 상태를 조회합니다. 지급 상태와 체인 전송 기록(`dispatch`: 전송 상태, 보낸 지갑, nonce, 트랜잭션 해시, 마지막 오류)을 나눠서 보여 줍니다. DB만 읽으므로 노드가 꺼져 있어도 조회할 수 있고, 소비자가 아직 처리하지 않았으면 `dispatch`는 `null`입니다. 서명한 트랜잭션 원본은 내보내지 않습니다.
+
+```bash
+curl http://localhost:8080/api/payouts/{id}
+```
+
+```json
+{"id":"…","merchantId":"merchant_demo_01","recipientAddress":"0x7099…","amountWei":"25500000000000000000","amountEth":"25.5",
+ "status":"AWAITING_CONFIRMATION",
+ "dispatch":{"status":"BROADCAST","fromAddress":"0xf39f…","nonce":12,"transactionHash":"0xabc…","lastError":null,"updatedAt":"…"}}
 ```
 
 **멱등성** (`Idempotency-Key` 헤더 필수)
@@ -217,6 +231,7 @@ PAYOUT_REQUESTED (Kafka)
 | 블록에서 성공 | **`SETTLED`** | `CONFIRMED` | `MERCHANT_PAYOUT_SETTLED` |
 | 블록에서 실패 (revert) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
 | 서명할 때 노드가 거부 (잔액 부족 등, 아무것도 보내지 않음) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
+| 영수증이 없는데 그 nonce를 다른 트랜잭션이 이미 씀 (지급 밖에서 같은 지갑을 쓴 경우) | `REQUIRES_REVIEW` (`NONCE_CONFLICT`) | `REQUIRES_REVIEW` | |
 | 성공했지만 노드의 트랜잭션이 지급과 다름 (보낸 지갑, 받는 지갑, 금액) | `REQUIRES_REVIEW` (`TRANSFER_MISMATCH`) | `REQUIRES_REVIEW` | |
 | 보낼 때 노드가 거부 / 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` | `REQUIRES_REVIEW` | |
 
@@ -228,6 +243,7 @@ PAYOUT_REQUESTED (Kafka)
 - **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
 - **확정 블록 수:** 영수증 블록을 포함해 `required-confirmations`개 블록이 쌓인 뒤에 성공(SETTLED)이나 실패(FAILED)를 정합니다. 그 전에 블록 재구성으로 영수증이 사라지면 다시 영수증을 기다립니다. anvil은 기본으로 거래가 있을 때만 블록을 만들므로, 로컬에서 2 이상으로 두면 다른 거래가 없을 때 정산이 멈춥니다 (`anvil --block-time 1`로 띄우면 됩니다).
 - **정산 전 내용 확인:** 정산하기 전에 `eth_getTransactionByHash`로 보낸 지갑, 받는 지갑, 금액이 지급과 같은지 확인합니다. 다르면 정산하지 않고 `REQUIRES_REVIEW`로 보냅니다.
+- **nonce 충돌 감지:** 영수증이 없으면 보낸 지갑의 확정 nonce(`eth_getTransactionCount(지갑, "latest")`)를 봅니다. 그 값이 이 트랜잭션의 nonce보다 크면 그 자리는 다른 트랜잭션이 이미 썼으므로, 이 트랜잭션은 블록에 들어갈 수 없습니다. 그 사이에 들어갔을 수 있으니 영수증을 한 번 더 확인하고, 그래도 없으면 `review-after`를 기다리지 않고 바로 `REQUIRES_REVIEW`로 보냅니다. `/api/chain/transfers`로 지급 지갑에서 직접 보내면 생길 수 있습니다.
 - **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
 - 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).
 

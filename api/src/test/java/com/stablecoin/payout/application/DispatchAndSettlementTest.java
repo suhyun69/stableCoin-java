@@ -36,7 +36,9 @@ import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
 import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.in.GetPayoutUseCase;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
+import com.stablecoin.payout.domain.DispatchStatus;
 
 /**
  * 실제 Postgres에서 지급 전송과 정산의 상태 변화를 확인한다. 체인은 가짜(PayoutChainPort)로 바꿔 끼운다.
@@ -69,6 +71,9 @@ class DispatchAndSettlementTest {
 
 	@Autowired
 	private PayoutRepositoryPort payouts;
+
+	@Autowired
+	private GetPayoutUseCase getPayout;
 
 	@Autowired
 	private CreatePayoutUseCase createPayout;
@@ -324,7 +329,10 @@ class DispatchAndSettlementTest {
 		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isZero();
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
 
-		assertThat(confirmService(Duration.ZERO, 1).confirmBroadcast()).isEqualTo(1);
+		// 영수증 없이 10분이 지났다. Duration.ZERO 로 확인하면 DB 컨테이너와 JVM의 시계가 몇 ms만 달라도 결과가 바뀐다
+		jdbc.update("UPDATE payout_dispatches SET updated_at = now() - interval '11 minutes' WHERE payout_id = ?",
+				payoutId);
+		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isEqualTo(1);
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
 		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW CONFIRMATION_TIMEOUT");
 	}
@@ -408,6 +416,49 @@ class DispatchAndSettlementTest {
 
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
 		assertThat((String) dispatchRow(payoutId).get("last_error")).contains("sent 1 wei");
+	}
+
+	@Test
+	void nonceUsedByAnotherTransactionRequiresReviewWithoutWaiting() {
+		UUID payoutId = createPayout("nonce-conflict");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.empty());
+		// 지급 밖에서 같은 지갑으로 보낸 트랜잭션이 nonce 0 을 먼저 썼다
+		given(chain.confirmedNonce(WALLET)).willReturn(1L);
+
+		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isEqualTo(1);
+
+		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW NONCE_CONFLICT");
+		assertThat(getPayout.get(payoutId).dispatch().lastError())
+			.isEqualTo("nonce 0 of " + WALLET + " was used by another transaction");
+		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
+	}
+
+	@Test
+	void transactionMinedWhileCheckingTheNonceIsNotAConflict() {
+		UUID payoutId = createPayout("nonce-race");
+		dispatch.dispatch(payoutId);
+		// 처음 볼 때는 영수증이 없었지만, 확정 nonce가 늘어난 건 바로 이 트랜잭션이 들어갔기 때문이다
+		given(chain.receipt("0xhash-0")).willReturn(Optional.empty(), Optional.of(receipt(true)));
+		given(chain.confirmedNonce(WALLET)).willReturn(1L);
+
+		assertThat(confirm.confirmBroadcast()).isEqualTo(1);
+
+		assertThat(payout(payoutId)).containsEntry("status", "SETTLED");
+	}
+
+	@Test
+	void pendingTransactionWithItsNonceStillFreeKeepsWaiting() {
+		UUID payoutId = createPayout("nonce-free");
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.empty());
+		given(chain.confirmedNonce(WALLET)).willReturn(0L);
+
+		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isZero();
+
+		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+		assertThat(getPayout.get(payoutId).dispatch().status()).isEqualTo(DispatchStatus.BROADCAST);
 	}
 
 	@Test

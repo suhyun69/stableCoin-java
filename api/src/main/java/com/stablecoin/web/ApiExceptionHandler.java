@@ -5,6 +5,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import com.stablecoin.chain.application.ChainException;
@@ -26,6 +28,7 @@ import com.stablecoin.chain.application.ChainUnavailableException;
 import com.stablecoin.chain.application.TransactionNotFoundException;
 import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.payout.application.IdempotencyKeyConflictException;
+import com.stablecoin.payout.application.PayoutNotFoundException;
 
 /**
  * 모든 오류를 ProblemDetail(application/problem+json)로 반환한다. 응답의 code로 오류 종류를 구분한다.
@@ -70,6 +73,19 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	}
 
 	/**
+	 * 경로 변수의 형식이 잘못된 경우 (UUID가 아닌 지급 ID 등).
+	 */
+	@Override
+	protected ResponseEntity<Object> handleTypeMismatch(TypeMismatchException ex, HttpHeaders headers,
+			HttpStatusCode status, WebRequest request) {
+		String name = (ex instanceof MethodArgumentTypeMismatchException mismatch) ? mismatch.getName()
+				: ex.getPropertyName();
+		ProblemDetail body = ProblemDetail.forStatus(status);
+		return handleExceptionInternal(ex, invalidRequest(body, name + ": 형식이 올바르지 않습니다"), headers, status,
+				request);
+	}
+
+	/**
 	 * 필수 헤더(Idempotency-Key 등)가 없는 경우.
 	 */
 	@Override
@@ -94,6 +110,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(IdempotencyKeyConflictException.class)
 	public ProblemDetail handleIdempotencyKeyConflict(IdempotencyKeyConflictException ex) {
 		return problem(HttpStatus.CONFLICT, ApiErrorCode.IDEMPOTENCY_KEY_CONFLICT, ex.getMessage());
+	}
+
+	@ExceptionHandler(PayoutNotFoundException.class)
+	public ProblemDetail handlePayoutNotFound(PayoutNotFoundException ex) {
+		return problem(HttpStatus.NOT_FOUND, ApiErrorCode.PAYOUT_NOT_FOUND, ex.getMessage());
 	}
 
 	@ExceptionHandler(TransactionNotFoundException.class)

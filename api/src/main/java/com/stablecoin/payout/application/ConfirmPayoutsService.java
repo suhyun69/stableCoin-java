@@ -30,6 +30,8 @@ import com.stablecoin.payout.domain.PayoutStatus;
  * <li>성공 → 노드에 기록된 트랜잭션의 보낸 지갑, 받는 지갑, 금액이 지급 내용과 같으면 정산
  * (SETTLED, 가맹점 알림 MERCHANT_PAYOUT_SETTLED). 다르면 REQUIRES_REVIEW.</li>
  * <li>실패(revert) → FAILED (가맹점 알림 MERCHANT_PAYOUT_FAILED)</li>
+ * <li>영수증이 없는데 지급 지갑의 그 nonce가 이미 다른 트랜잭션으로 블록에 들어감 → 이 트랜잭션은 영영 들어갈 수 없으므로
+ * review-after 를 기다리지 않고 바로 REQUIRES_REVIEW (NONCE_CONFLICT). 지급 밖에서 같은 지갑을 쓴 경우에 생긴다.</li>
  * <li>review-after 가 지나도 영수증이 없음 → REQUIRES_REVIEW (돈이 나갔는지 사람이 확인)</li>
  * </ul>
  */
@@ -80,6 +82,18 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 
 	private boolean confirm(PayoutDispatch dispatch) {
 		Optional<ChainReceipt> receipt = chain.receipt(dispatch.txHash());
+		if (receipt.isEmpty() && nonceTakenByAnotherTransaction(dispatch)) {
+			// 확정 nonce를 읽는 사이에 이 트랜잭션이 블록에 들어갔을 수 있으므로 한 번 더 본다
+			receipt = chain.receipt(dispatch.txHash());
+			if (receipt.isEmpty()) {
+				String detail = "nonce " + dispatch.nonce() + " of " + dispatch.fromAddress()
+						+ " was used by another transaction";
+				log.error("Payout {} transaction {} can never be mined: {}", dispatch.payoutId(), dispatch.txHash(),
+						detail);
+				return settlement.requireReview(dispatch.payoutId(), PayoutStatus.AWAITING_CONFIRMATION,
+						DispatchStatus.BROADCAST, "NONCE_CONFLICT", detail);
+			}
+		}
 		if (receipt.isPresent()) {
 			long confirmations = chain.latestBlockNumber() - receipt.get().blockNumber() + 1;
 			if (confirmations < requiredConfirmations) {
@@ -106,6 +120,14 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 					DispatchStatus.BROADCAST, "CONFIRMATION_TIMEOUT", "no receipt after " + reviewAfter);
 		}
 		return false;
+	}
+
+	/**
+	 * 보낸 지갑에서 블록에 들어간 트랜잭션 수가 이 nonce보다 크면, 이 nonce 자리는 이미 쓰였다.
+	 */
+	private boolean nonceTakenByAnotherTransaction(PayoutDispatch dispatch) {
+		return dispatch.nonce() != null && dispatch.fromAddress() != null
+				&& chain.confirmedNonce(dispatch.fromAddress()) > dispatch.nonce();
 	}
 
 	/**

@@ -38,6 +38,9 @@ public interface ChainNodePort {
 	 */
 	BigInteger getPendingNonce(String address);
 
+	/** 블록에 들어간 트랜잭션까지만 센 nonce (eth_getTransactionCount ... "latest"). 다음에 블록에 들어갈 nonce다. */
+	BigInteger getConfirmedNonce(String address);
+
 	BigInteger estimateGas(String from, String to, BigInteger value);
 
 	BigInteger getMaxPriorityFeePerGas();

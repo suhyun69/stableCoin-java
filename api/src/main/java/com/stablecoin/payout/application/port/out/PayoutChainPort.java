@@ -37,4 +37,9 @@ public interface PayoutChainPort {
 
 	long latestBlockNumber();
 
+	/**
+	 * 이 지갑에서 블록에 들어간 트랜잭션 수. 이보다 작은 nonce는 모두 이미 쓰였다.
+	 */
+	long confirmedNonce(String address);
+
 }

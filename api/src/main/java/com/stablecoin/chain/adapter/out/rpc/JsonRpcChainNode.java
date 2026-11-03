@@ -60,6 +60,11 @@ public class JsonRpcChainNode implements ChainNodePort {
 	}
 
 	@Override
+	public BigInteger getConfirmedNonce(String address) {
+		return Eth.fromHex(call("eth_getTransactionCount", List.of(address, "latest"), STRING));
+	}
+
+	@Override
 	public BigInteger estimateGas(String from, String to, BigInteger value) {
 		return Eth.fromHex(call("eth_estimateGas", List.of(new CallRequest(from, to, Eth.toHex(value))), STRING));
 	}

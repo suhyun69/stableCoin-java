@@ -27,6 +27,9 @@ public enum ApiErrorCode {
 	CHAIN_ID_MISMATCH,
 
 	/** 같은 Idempotency-Key로 다른 내용을 요청함 */
-	IDEMPOTENCY_KEY_CONFLICT
+	IDEMPOTENCY_KEY_CONFLICT,
+
+	/** 지급이 없음 */
+	PAYOUT_NOT_FOUND
 
 }

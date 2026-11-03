@@ -22,7 +22,7 @@ import com.stablecoin.payout.domain.PayoutDispatch;
 @Component
 class JdbcPayoutDispatchStore implements PayoutDispatchStorePort {
 
-	private static final String COLUMNS = "payout_id, status, from_address, nonce, tx_hash, signed_tx, updated_at";
+	private static final String COLUMNS = "payout_id, status, from_address, nonce, tx_hash, signed_tx, last_error, updated_at";
 
 	private final JdbcTemplate jdbc;
 
@@ -101,9 +101,10 @@ class JdbcPayoutDispatchStore implements PayoutDispatchStorePort {
 	private PayoutDispatch map(ResultSet rs, int row) throws SQLException {
 		Timestamp updatedAt = rs.getTimestamp("updated_at");
 		long nonce = rs.getLong("nonce");
+		boolean noNonce = rs.wasNull();
 		return new PayoutDispatch(rs.getObject("payout_id", UUID.class), DispatchStatus.valueOf(rs.getString("status")),
-				rs.getString("from_address"), rs.wasNull() ? null : nonce, rs.getString("tx_hash"),
-				rs.getString("signed_tx"), (updatedAt != null) ? updatedAt.toInstant() : null);
+				rs.getString("from_address"), noNonce ? null : nonce, rs.getString("tx_hash"), rs.getString("signed_tx"),
+				rs.getString("last_error"), (updatedAt != null) ? updatedAt.toInstant() : null);
 	}
 
 }

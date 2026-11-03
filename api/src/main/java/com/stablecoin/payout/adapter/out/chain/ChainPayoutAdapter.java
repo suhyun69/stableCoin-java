@@ -77,4 +77,9 @@ class ChainPayoutAdapter implements PayoutChainPort {
 		return chainQuery.getLatestBlockNumber();
 	}
 
+	@Override
+	public long confirmedNonce(String address) {
+		return chainQuery.getConfirmedNonce(address);
+	}
+
 }

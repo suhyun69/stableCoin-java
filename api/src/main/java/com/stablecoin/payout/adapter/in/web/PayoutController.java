@@ -11,9 +11,13 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -24,6 +28,7 @@ import com.stablecoin.chain.domain.Eth;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutResult;
+import com.stablecoin.payout.application.port.in.GetPayoutUseCase;
 
 @Tag(name = "Payout", description = "가맹점 지급")
 @RestController
@@ -35,8 +40,11 @@ public class PayoutController {
 
 	private final CreatePayoutUseCase createPayout;
 
-	public PayoutController(CreatePayoutUseCase createPayout) {
+	private final GetPayoutUseCase getPayout;
+
+	public PayoutController(CreatePayoutUseCase createPayout, GetPayoutUseCase getPayout) {
 		this.createPayout = createPayout;
+		this.getPayout = getPayout;
 	}
 
 	@Operation(summary = "지급 요청",
@@ -66,6 +74,21 @@ public class PayoutController {
 			response.header(IDEMPOTENT_REPLAYED, "true");
 		}
 		return response.body(PayoutResponse.of(result.payout()));
+	}
+
+	@Operation(summary = "지급 조회",
+			description = "지급 상태와 체인 전송 기록(전송 상태, 보낸 지갑, nonce, 트랜잭션 해시, 마지막 오류)을 함께 반환합니다. "
+					+ "DB만 읽으므로 노드가 꺼져 있어도 조회할 수 있습니다. 소비자가 아직 처리하지 않았으면 dispatch는 null입니다.")
+	@ApiResponse(responseCode = "200", description = "지급")
+	@ApiResponse(responseCode = "400", description = "지급 ID가 UUID가 아님",
+			content = @Content(mediaType = "application/problem+json",
+					schema = @Schema(implementation = ProblemDetail.class)))
+	@ApiResponse(responseCode = "404", description = "없는 지급 (PAYOUT_NOT_FOUND)",
+			content = @Content(mediaType = "application/problem+json",
+					schema = @Schema(implementation = ProblemDetail.class)))
+	@GetMapping("/{payoutId}")
+	public PayoutDetailResponse get(@Parameter(description = "지급 ID") @PathVariable UUID payoutId) {
+		return PayoutDetailResponse.of(getPayout.get(payoutId));
 	}
 
 }

@@ -70,6 +70,11 @@ public class ChainQueryService implements ChainQueryUseCase {
 	}
 
 	@Override
+	public long getConfirmedNonce(String address) {
+		return chainNode.getConfirmedNonce(address).longValueExact();
+	}
+
+	@Override
 	public TransactionDetail getTransaction(String txHash) {
 		ChainTransaction tx = chainNode.getTransaction(txHash)
 			.orElseThrow(() -> new TransactionNotFoundException(txHash));
