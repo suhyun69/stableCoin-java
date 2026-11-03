@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigInteger;
 
 import org.junit.jupiter.api.Test;
+import org.web3j.crypto.Hash;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.crypto.SignedRawTransaction;
 import org.web3j.crypto.TransactionDecoder;
@@ -13,6 +14,7 @@ import org.web3j.crypto.transaction.type.Transaction1559;
 import org.web3j.crypto.transaction.type.TransactionType;
 
 import com.stablecoin.chain.application.UnknownSignerException;
+import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.chain.domain.UnsignedTransaction;
 
 class AnvilDevWalletSignerTest {
@@ -45,9 +47,13 @@ class AnvilDevWalletSignerTest {
 				new BigInteger("1500000000000000000"), BigInteger.valueOf(21000), BigInteger.valueOf(1_000_000_000L),
 				BigInteger.valueOf(2_750_000_000L));
 
-		String signed = signer.sign(ANVIL_1, tx);
+		SignedTransaction result = signer.sign(ANVIL_1, tx);
+		String signed = result.raw();
 
 		assertThat(signed).startsWith("0x02");
+		assertThat(result.hash()).isEqualTo(Hash.sha3(signed));
+		assertThat(result.from()).isEqualTo(ANVIL_1);
+		assertThat(result.nonce()).isEqualTo(7L);
 		RawTransaction decoded = TransactionDecoder.decode(signed);
 		assertThat(decoded.getType()).isEqualTo(TransactionType.EIP1559);
 		assertThat(decoded.getNonce()).isEqualTo(BigInteger.valueOf(7));

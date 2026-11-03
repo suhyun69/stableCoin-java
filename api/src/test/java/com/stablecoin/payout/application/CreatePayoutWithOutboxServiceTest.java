@@ -31,7 +31,8 @@ import com.stablecoin.payout.domain.PayoutStatus;
 /**
  * 실제 Postgres(Testcontainers)에서 지급, 이력, outbox가 한 트랜잭션으로 저장되는지와 멱등성을 확인한다.
  */
-@SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false" })
+@SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false",
+		"payout.dispatcher.enabled=false" })
 @Import(TestcontainersConfiguration.class)
 class CreatePayoutWithOutboxServiceTest {
 
@@ -60,6 +61,7 @@ class CreatePayoutWithOutboxServiceTest {
 	@BeforeEach
 	void cleanTables() {
 		jdbc.update("DELETE FROM outbox_messages");
+		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
 	}

@@ -198,7 +198,39 @@ POST /api/payouts ─(한 트랜잭션)→ payouts + history + outbox(PENDING)
 - **중복 가능 (at-least-once):** Kafka 발행 후 `PUBLISHED`로 바꾸기 전에 죽으면 같은 메시지가 다시 발행됩니다. 받는 쪽은 `outbox-message-id`로 중복을 걸러야 합니다.
 - 한 메시지가 실패해도 같은 묶음의 나머지는 계속 발행합니다.
 
-> **아직 체인으로 보내지 않습니다.** 이벤트를 받아 실제로 지급을 보내는 소비자(consumer)는 아직 없어서, `payouts.status`는 `REQUESTED`로 남습니다. 지급 지갑 설정(`CHAIN_PAYOUT_WALLET`)과 전송 어댑터는 소비자를 만들 때 쓰입니다.
+### 지급 소비자와 정산
+
+`stablecoin.payout`의 `PAYOUT_REQUESTED`를 받은 소비자가 지급 지갑(`CHAIN_PAYOUT_WALLET`)에서 실제로 보내고, 확정 확인 작업이 영수증을 보고 정산합니다.
+
+```
+PAYOUT_REQUESTED (Kafka)
+  → 소비자: 전송 기록 STARTED (지급마다 한 번만)
+           → 서명 → 서명한 트랜잭션을 DB에 먼저 저장 (SIGNED)
+           → 노드에 보냄 → 지급 AWAITING_CONFIRMATION, 전송 기록 BROADCAST
+  → 확정 확인 (2초마다): 영수증 성공 → 정산: 지급 SETTLED + 가맹점 알림 MERCHANT_PAYOUT_SETTLED (outbox → Kafka)
+```
+
+| 상황 | 지급 상태 | 전송 기록 (`payout_dispatches`) | 가맹점 알림 |
+| --- | --- | --- | --- |
+| 노드가 받음 | `AWAITING_CONFIRMATION` | `BROADCAST` | |
+| 블록에서 성공 | **`SETTLED`** | `CONFIRMED` | `MERCHANT_PAYOUT_SETTLED` |
+| 블록에서 실패 (revert) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
+| 서명할 때 노드가 거부 (잔액 부족 등, 아무것도 보내지 않음) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
+| 보낼 때 노드가 거부 / 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` | `REQUIRES_REVIEW` | |
+
+**두 번 보내지 않고, 멈추지도 않게**
+- **지급마다 한 번만:** `payout_dispatches.payout_id`가 UNIQUE라 같은 이벤트가 여러 번 와도(메시지 ID가 달라도) 전송은 한 번만 진행합니다.
+- **보내기 전에 저장:** 서명한 트랜잭션(raw, hash, nonce)을 DB에 커밋한 뒤 노드에 보냅니다. 보내다 죽어도 같은 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않습니다. 노드가 이미 아는 트랜잭션이면 성공으로 봅니다.
+- **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
+- **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
+- 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).
+
+| 설정 | 기본값 | 설명 |
+| --- | --- | --- |
+| `PAYOUT_DISPATCHER_ENABLED` | `true` | 소비자와 확정 확인 작업 실행 여부 |
+| `payout.confirmation.interval` | `2s` | 확정 확인 주기 |
+| `payout.confirmation.review-after` | `10m` | 영수증 없이 이 시간이 지나면 `REQUIRES_REVIEW` |
+| `payout.dispatcher.stuck-after` | `30s` | 멈춘 전송으로 보는 시간 |
 
 API 문서 (springdoc-openapi, 앱 실행 후):
 

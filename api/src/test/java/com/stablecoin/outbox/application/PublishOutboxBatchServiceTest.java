@@ -42,7 +42,8 @@ import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayou
 /**
  * 실제 Postgres, Kafka(Testcontainers)로 outbox 발행기를 확인한다. 스케줄러는 끄고 직접 호출한다.
  */
-@SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false" })
+@SpringBootTest(properties = { "chain.rpc-url=http://127.0.0.1:1", "outbox.publisher.enabled=false",
+		"payout.dispatcher.enabled=false" })
 @Import(TestcontainersConfiguration.class)
 class PublishOutboxBatchServiceTest {
 
@@ -74,6 +75,7 @@ class PublishOutboxBatchServiceTest {
 	@BeforeEach
 	void cleanTables() {
 		jdbc.update("DELETE FROM outbox_messages");
+		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
 	}

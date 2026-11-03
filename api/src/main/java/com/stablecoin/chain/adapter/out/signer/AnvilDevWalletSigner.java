@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.web3j.crypto.Bip32ECKeyPair;
 import org.web3j.crypto.Credentials;
+import org.web3j.crypto.Hash;
 import org.web3j.crypto.MnemonicUtils;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.crypto.TransactionEncoder;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 
 import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.chain.application.port.out.TransactionSignerPort;
+import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.chain.domain.UnsignedTransaction;
 
 /**
@@ -81,14 +83,16 @@ public class AnvilDevWalletSigner implements TransactionSignerPort {
 	}
 
 	@Override
-	public String sign(String from, UnsignedTransaction tx) {
+	public SignedTransaction sign(String from, UnsignedTransaction tx) {
 		Credentials credentials = wallets.get(from.toLowerCase(Locale.ROOT));
 		if (credentials == null) {
 			throw new UnknownSignerException(from);
 		}
 		RawTransaction raw = RawTransaction.createEtherTransaction(tx.chainId(), tx.nonce(), tx.gasLimit(), tx.to(),
 				tx.value(), tx.maxPriorityFeePerGas(), tx.maxFeePerGas());
-		return Numeric.toHexString(TransactionEncoder.signMessage(raw, credentials));
+		String signed = Numeric.toHexString(TransactionEncoder.signMessage(raw, credentials));
+		return new SignedTransaction(credentials.getAddress(), tx.to(), tx.value(), tx.nonce().longValueExact(), signed,
+				Hash.sha3(signed));
 	}
 
 	@Override

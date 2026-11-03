@@ -3,6 +3,7 @@ package com.stablecoin.chain.application.port.out;
 import java.util.List;
 
 import com.stablecoin.chain.application.UnknownSignerException;
+import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.chain.domain.UnsignedTransaction;
 
 /**
@@ -18,9 +19,9 @@ public interface TransactionSignerPort {
 	boolean canSign(String address);
 
 	/**
-	 * from 지갑의 키로 트랜잭션에 서명하고 노드에 보낼 hex 문자열(0x...)을 반환한다.
+	 * from 지갑의 키로 트랜잭션에 서명하고, 노드에 보낼 hex(raw)와 트랜잭션 해시를 함께 돌려준다.
 	 * @throws UnknownSignerException from 지갑의 키가 없는 경우
 	 */
-	String sign(String from, UnsignedTransaction transaction);
+	SignedTransaction sign(String from, UnsignedTransaction transaction);
 
 }

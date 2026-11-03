@@ -2,6 +2,7 @@ package com.stablecoin.chain.application;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
@@ -46,6 +47,16 @@ public class ChainQueryService implements ChainQueryUseCase {
 	@Override
 	public boolean canSign(String address) {
 		return signer.canSign(address);
+	}
+
+	@Override
+	public Optional<ChainReceipt> getReceipt(String txHash) {
+		return chainNode.getReceipt(txHash);
+	}
+
+	@Override
+	public boolean isKnownTransaction(String txHash) {
+		return chainNode.getTransaction(txHash).isPresent();
 	}
 
 	@Override

@@ -36,7 +36,7 @@ class PayoutEntity {
 	private String requestFingerprint;
 
 	@Enumerated(EnumType.STRING)
-	@Column(nullable = false, length = 20)
+	@Column(nullable = false, length = 30)
 	private PayoutStatus status;
 
 	protected PayoutEntity() {
