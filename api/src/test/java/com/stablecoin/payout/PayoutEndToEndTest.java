@@ -69,6 +69,7 @@ class PayoutEndToEndTest {
 	void cleanTables() {
 		jdbc.update("DELETE FROM outbox_messages");
 		jdbc.update("DELETE FROM processed_messages");
+		jdbc.update("DELETE FROM chain_transactions");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
@@ -86,14 +87,15 @@ class PayoutEndToEndTest {
 
 		// 체인: 받는 지갑에 정확히 지급 금액이 들어왔다
 		assertThat(balance(RECIPIENT).subtract(before)).isEqualTo(AMOUNT);
-		String txHash = jdbc.queryForObject("SELECT transaction_hash FROM payouts WHERE id = ?", String.class, payoutId);
+		String txHash = jdbc.queryForObject("SELECT transaction_hash FROM chain_transactions WHERE payout_id = ?",
+				String.class, payoutId);
 		assertThat(chainQuery.getReceipt(txHash)).hasValueSatisfying(receipt -> assertThat(receipt.success()).isTrue());
-		assertThat(jdbc.queryForObject("SELECT tx_hash FROM payout_dispatches WHERE payout_id = ?", String.class,
-				payoutId))
-			.isEqualTo(txHash);
-		assertThat(jdbc.queryForObject("SELECT status FROM payout_dispatches WHERE payout_id = ?", String.class,
-				payoutId))
-			.isEqualTo("CONFIRMED");
+		assertThat(jdbc.queryForMap("""
+				SELECT status, included_block_number IS NOT NULL AS included, confirmations >= 1 AS confirmed
+				FROM chain_transactions WHERE payout_id = ?""", payoutId))
+			.containsEntry("status", "CONFIRMED")
+			.containsEntry("included", true)
+			.containsEntry("confirmed", true);
 		assertThat(jdbc.queryForList("""
 				SELECT to_status FROM payout_status_history WHERE payout_id = ? ORDER BY occurred_at, id""",
 				String.class, payoutId))

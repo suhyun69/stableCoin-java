@@ -21,14 +21,9 @@ public interface PayoutRepositoryPort {
 	Optional<Payout> findById(UUID id);
 
 	/**
-	 * expected 상태일 때만 next 로 바꾼다. transactionHash 가 null 이 아니면 함께 저장한다.
+	 * expected 상태일 때만 next 로 바꾼다.
 	 * @return 바꿨으면 true
 	 */
-	boolean transition(UUID id, PayoutStatus expected, PayoutStatus next, String transactionHash);
-
-	/**
-	 * 저장된 체인 트랜잭션 해시. 없으면 비어 있다.
-	 */
-	Optional<String> findTransactionHash(UUID id);
+	boolean transition(UUID id, PayoutStatus expected, PayoutStatus next);
 
 }

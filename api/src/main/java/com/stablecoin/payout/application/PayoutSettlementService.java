@@ -13,15 +13,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stablecoin.outbox.application.port.out.OutboxPort;
 import com.stablecoin.outbox.domain.OutboxMessage;
-import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.out.ChainTransactionStorePort;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
 import com.stablecoin.payout.application.port.out.PayoutStatusHistoryPort;
-import com.stablecoin.payout.domain.DispatchStatus;
 import com.stablecoin.payout.domain.Payout;
+import com.stablecoin.payout.domain.PayoutChainTransaction;
 import com.stablecoin.payout.domain.PayoutStatus;
 
 /**
- * 지급 상태 변경을 한곳에서 처리한다. 지급 상태, 상태 이력, 전송 기록, (필요하면) 가맹점 알림 outbox 메시지를
+ * 지급 상태 변경을 한곳에서 처리한다. 지급 상태, 상태 이력, 체인 트랜잭션, (필요하면) 가맹점 알림 outbox 메시지를
  * <b>한 DB 트랜잭션</b>으로 바꾼다 (stableCoin TS RecordPayoutSettled 를 보완).
  * <ul>
  * <li>지급이 기대한 상태일 때만 바꾼다 (조건부 UPDATE). 다른 상태면 아무것도 하지 않는다.</li>
@@ -42,71 +42,79 @@ public class PayoutSettlementService {
 
 	private final PayoutStatusHistoryPort history;
 
-	private final PayoutDispatchStorePort dispatches;
+	private final ChainTransactionStorePort chainTransactions;
 
 	private final OutboxPort outbox;
 
 	private final TransactionTemplate transaction;
 
 	public PayoutSettlementService(PayoutRepositoryPort payouts, PayoutStatusHistoryPort history,
-			PayoutDispatchStorePort dispatches, OutboxPort outbox, PlatformTransactionManager transactionManager) {
+			ChainTransactionStorePort chainTransactions, OutboxPort outbox, PlatformTransactionManager transactionManager) {
 		this.payouts = payouts;
 		this.history = history;
-		this.dispatches = dispatches;
+		this.chainTransactions = chainTransactions;
 		this.outbox = outbox;
 		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
 	/**
-	 * 노드가 트랜잭션을 받았다: REQUESTED → AWAITING_CONFIRMATION, 전송 기록 SIGNED → BROADCAST.
+	 * 노드가 트랜잭션을 받았다: REQUESTED → AWAITING_CONFIRMATION, 체인 트랜잭션 PENDING.
 	 */
-	public boolean markBroadcast(UUID payoutId, String txHash) {
+	public boolean markBroadcast(UUID payoutId) {
 		return change(payoutId, PayoutStatus.REQUESTED, PayoutStatus.AWAITING_CONFIRMATION, "TRANSACTION_BROADCAST",
-				txHash, DispatchStatus.SIGNED, DispatchStatus.BROADCAST, null, null);
+				() -> chainTransactions.markPending(payoutId), null);
 	}
 
 	/**
-	 * 블록에서 성공했다: AWAITING_CONFIRMATION → SETTLED, 가맹점에 MERCHANT_PAYOUT_SETTLED 알림.
+	 * 블록에서 성공하고 확정됐다: AWAITING_CONFIRMATION → SETTLED, 가맹점에 MERCHANT_PAYOUT_SETTLED 알림.
 	 */
-	public boolean settle(UUID payoutId, String txHash) {
-		return change(payoutId, PayoutStatus.AWAITING_CONFIRMATION, PayoutStatus.SETTLED, "RECEIPT_CONFIRMED", txHash,
-				DispatchStatus.BROADCAST, DispatchStatus.CONFIRMED, null, MERCHANT_PAYOUT_SETTLED);
+	public boolean settle(UUID payoutId) {
+		return change(payoutId, PayoutStatus.AWAITING_CONFIRMATION, PayoutStatus.SETTLED, "RECEIPT_CONFIRMED",
+				() -> chainTransactions.markConfirmed(payoutId), MERCHANT_PAYOUT_SETTLED);
 	}
 
 	/**
 	 * 블록에서 실패했다(revert): AWAITING_CONFIRMATION → FAILED, 가맹점에 MERCHANT_PAYOUT_FAILED 알림.
 	 */
-	public boolean failOnChain(UUID payoutId, String txHash) {
-		return change(payoutId, PayoutStatus.AWAITING_CONFIRMATION, PayoutStatus.FAILED, "TRANSACTION_REVERTED", txHash,
-				DispatchStatus.BROADCAST, DispatchStatus.FAILED, "transaction reverted", MERCHANT_PAYOUT_FAILED);
+	public boolean failOnChain(UUID payoutId) {
+		return change(payoutId, PayoutStatus.AWAITING_CONFIRMATION, PayoutStatus.FAILED, "TRANSACTION_REVERTED",
+				() -> chainTransactions.markReverted(payoutId), MERCHANT_PAYOUT_FAILED);
 	}
 
 	/**
-	 * 서명 단계에서 노드가 거부했다(잔액 부족 등). 체인에 아무것도 보내지 않았으므로 실패로 확정한다:
+	 * 서명 단계에서 노드가 거부했다(잔액 부족 등). 체인에 아무것도 보내지 않았고 체인 트랜잭션도 없으므로 실패로 확정한다:
 	 * REQUESTED → FAILED, 가맹점에 MERCHANT_PAYOUT_FAILED 알림.
 	 */
 	public boolean rejectBeforeSend(UUID payoutId, String error) {
-		return change(payoutId, PayoutStatus.REQUESTED, PayoutStatus.FAILED, "TRANSFER_REJECTED", null,
-				DispatchStatus.STARTED, DispatchStatus.FAILED, error, MERCHANT_PAYOUT_FAILED);
+		log.warn("Payout {} was rejected before sending: {}", payoutId, error);
+		return change(payoutId, PayoutStatus.REQUESTED, PayoutStatus.FAILED, "TRANSFER_REJECTED", () -> {
+		}, MERCHANT_PAYOUT_FAILED);
 	}
 
 	/**
 	 * 결과를 알 수 없다. 돈이 나갔을 수도 있으므로 실패로 처리하지 않고 사람이 확인하게 한다.
 	 */
-	public boolean requireReview(UUID payoutId, PayoutStatus from, DispatchStatus dispatchFrom, String reason,
-			String error) {
-		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason, null, dispatchFrom,
-				DispatchStatus.REQUIRES_REVIEW, error, null);
+	public boolean requireReview(UUID payoutId, PayoutStatus from, String reason, String error) {
+		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason,
+				() -> chainTransactions.recordError(payoutId, error), null);
 	}
 
-	private boolean change(UUID payoutId, PayoutStatus from, PayoutStatus to, String reason, String txHash,
-			DispatchStatus dispatchFrom, DispatchStatus dispatchTo, String error, String merchantEvent) {
+	/**
+	 * 이 트랜잭션은 블록에 들어갈 수 없다. 지급을 어떻게 할지는 사람이 정한다.
+	 */
+	public boolean requireReviewNotOnChain(UUID payoutId, PayoutStatus from, String reason, String error) {
+		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason,
+				() -> chainTransactions.markFailed(payoutId, error), null);
+	}
+
+	private boolean change(UUID payoutId, PayoutStatus from, PayoutStatus to, String reason, Runnable chainUpdate,
+			String merchantEvent) {
 		Boolean changed = transaction.execute(status -> {
-			if (!payouts.transition(payoutId, from, to, txHash)) {
+			if (!payouts.transition(payoutId, from, to)) {
 				return false;
 			}
 			history.record(payoutId, from, to, reason);
-			dispatches.transition(payoutId, dispatchFrom, dispatchTo, error);
+			chainUpdate.run();
 			if (merchantEvent != null) {
 				outbox.enqueue(OutboxMessage.of(CreatePayoutWithOutboxService.AGGREGATE_TYPE, payoutId, merchantEvent,
 						merchantPayload(payoutId)));
@@ -131,7 +139,9 @@ public class PayoutSettlementService {
 		payload.put("merchantId", payout.merchantId());
 		payload.put("recipientAddress", payout.recipientAddress());
 		payload.put("amountWei", payout.amountWei().toString());
-		payouts.findTransactionHash(payoutId).ifPresent(hash -> payload.put("transactionHash", hash));
+		chainTransactions.findByPayoutId(payoutId)
+			.map(PayoutChainTransaction::transactionHash)
+			.ifPresent(hash -> payload.put("transactionHash", hash));
 		return payload;
 	}
 

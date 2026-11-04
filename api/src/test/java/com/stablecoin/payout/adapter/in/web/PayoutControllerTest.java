@@ -11,7 +11,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigInteger;
-import java.time.Instant;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -29,8 +28,8 @@ import com.stablecoin.payout.application.IdempotencyKeyConflictException;
 import com.stablecoin.payout.application.PayoutNotFoundException;
 import com.stablecoin.payout.application.port.in.GetPayoutUseCase;
 import com.stablecoin.payout.application.port.in.GetPayoutUseCase.PayoutView;
-import com.stablecoin.payout.domain.DispatchStatus;
-import com.stablecoin.payout.domain.PayoutDispatch;
+import com.stablecoin.payout.domain.ChainTransactionStatus;
+import com.stablecoin.payout.domain.PayoutChainTransaction;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutResult;
 import com.stablecoin.payout.domain.Payout;
@@ -147,28 +146,28 @@ class PayoutControllerTest {
 	@Test
 	void returnsPayoutWithItsDispatchState() throws Exception {
 		UUID id = UUID.randomUUID();
-		PayoutDispatch dispatch = new PayoutDispatch(id, DispatchStatus.BROADCAST,
-				"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", 12L, "0xabc", "0x02signed", null,
-				Instant.parse("2026-11-04T01:02:03Z"));
-		given(getPayout.get(id)).willReturn(new PayoutView(payout(id), dispatch));
+		PayoutChainTransaction tx = new PayoutChainTransaction(id, ChainTransactionStatus.MINED_SUCCESS,
+				"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", 12L, "0xabc", "0x02signed", null, 100L, 1, null);
+		given(getPayout.get(id)).willReturn(new PayoutView(payout(id), tx));
 
 		mockMvc.perform(get("/api/payouts/{id}", id))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.id").value(id.toString()))
 			.andExpect(jsonPath("$.status").value("REQUESTED"))
 			.andExpect(jsonPath("$.amountEth").value("25.5"))
-			.andExpect(jsonPath("$.dispatch.status").value("BROADCAST"))
+			.andExpect(jsonPath("$.dispatch.status").value("MINED_SUCCESS"))
 			.andExpect(jsonPath("$.dispatch.fromAddress").value("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
 			.andExpect(jsonPath("$.dispatch.nonce").value(12))
 			.andExpect(jsonPath("$.dispatch.transactionHash").value("0xabc"))
-			.andExpect(jsonPath("$.dispatch.updatedAt").value("2026-11-04T01:02:03Z"))
+			.andExpect(jsonPath("$.dispatch.includedBlockNumber").value(100))
+			.andExpect(jsonPath("$.dispatch.confirmations").value(1))
 			// 서명한 트랜잭션 원본과 멱등성 키는 내보내지 않는다
-			.andExpect(jsonPath("$.dispatch.signedTx").doesNotExist())
+			.andExpect(jsonPath("$.dispatch.rawTransaction").doesNotExist())
 			.andExpect(jsonPath("$.idempotencyKey").doesNotExist());
 	}
 
 	@Test
-	void returnsNullDispatchBeforeTheConsumerHandlesThePayout() throws Exception {
+	void returnsNullDispatchBeforeThePayoutIsSigned() throws Exception {
 		UUID id = UUID.randomUUID();
 		given(getPayout.get(id)).willReturn(new PayoutView(payout(id), null));
 

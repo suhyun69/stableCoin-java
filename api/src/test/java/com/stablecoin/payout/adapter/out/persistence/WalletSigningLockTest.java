@@ -18,7 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import com.stablecoin.TestcontainersConfiguration;
 import com.stablecoin.chain.domain.SignedTransaction;
-import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.out.ChainTransactionStorePort;
 
 /**
  * 앱 인스턴스 두 개가 같은 지갑으로 동시에 서명하는 상황을 트랜잭션 두 개로 재현한다.
@@ -33,7 +33,7 @@ class WalletSigningLockTest {
 	private static final String WALLET = "0x3000000000000000000000000000000000000AbC";
 
 	@Autowired
-	private PayoutDispatchStorePort dispatches;
+	private ChainTransactionStorePort chainTransactions;
 
 	@Autowired
 	private JdbcTemplate jdbc;
@@ -44,24 +44,24 @@ class WalletSigningLockTest {
 	@Test
 	void secondInstanceWaitsAndPicksTheNextNonce() throws Exception {
 		String wallet = WALLET;
-		long base = dispatches.nextNonceFloor(wallet);
-		UUID first = startedPayout();
-		UUID second = startedPayout();
+		long base = chainTransactions.nextNonceFloor(wallet);
+		UUID first = payout();
+		UUID second = payout();
 		CountDownLatch firstLocked = new CountDownLatch(1);
 
 		CompletableFuture<Long> a = CompletableFuture.supplyAsync(() -> transaction.execute(status -> {
-			dispatches.lockWalletForSigning(wallet);
+			chainTransactions.lockWalletForSigning(wallet);
 			firstLocked.countDown();
-			long nonce = dispatches.nextNonceFloor(wallet);
+			long nonce = chainTransactions.nextNonceFloor(wallet);
 			sleep(500); // 서명하는 동안
-			dispatches.markSigned(first, signed(wallet, nonce));
+			chainTransactions.saveSigned(first, signed(wallet, nonce));
 			return nonce;
 		}));
 		assertThat(firstLocked.await(5, TimeUnit.SECONDS)).isTrue();
 		CompletableFuture<Long> b = CompletableFuture.supplyAsync(() -> transaction.execute(status -> {
-			dispatches.lockWalletForSigning(wallet.toLowerCase()); // 대소문자가 달라도 같은 잠금
-			long nonce = dispatches.nextNonceFloor(wallet);
-			dispatches.markSigned(second, signed(wallet, nonce));
+			chainTransactions.lockWalletForSigning(wallet.toLowerCase()); // 대소문자가 달라도 같은 잠금
+			long nonce = chainTransactions.nextNonceFloor(wallet);
+			chainTransactions.saveSigned(second, signed(wallet, nonce));
 			return nonce;
 		}));
 
@@ -74,27 +74,26 @@ class WalletSigningLockTest {
 		CountDownLatch locked = new CountDownLatch(1);
 		CountDownLatch release = new CountDownLatch(1);
 		CompletableFuture<Void> holder = CompletableFuture.runAsync(() -> transaction.executeWithoutResult(status -> {
-			dispatches.lockWalletForSigning("0x1000000000000000000000000000000000000001");
+			chainTransactions.lockWalletForSigning("0x1000000000000000000000000000000000000001");
 			locked.countDown();
 			await(release);
 		}));
 		assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
 
 		CompletableFuture<Void> other = CompletableFuture.runAsync(() -> transaction.executeWithoutResult(
-				status -> dispatches.lockWalletForSigning("0x2000000000000000000000000000000000000002")));
+				status -> chainTransactions.lockWalletForSigning("0x2000000000000000000000000000000000000002")));
 
 		other.get(5, TimeUnit.SECONDS);
 		release.countDown();
 		holder.get(5, TimeUnit.SECONDS);
 	}
 
-	private UUID startedPayout() {
+	private UUID payout() {
 		UUID id = UUID.randomUUID();
 		jdbc.update("""
 				INSERT INTO payouts (id, merchant_id, recipient_address, amount_wei, idempotency_key, request_fingerprint,
 				  status) VALUES (?, 'merchant_demo_01', '0x70997970c51812dc3a010c7d01b50e0d17dc79c8', 1, ?, 'f',
 				  'REQUESTED')""", id, "lock-" + id);
-		dispatches.startOnce(id);
 		return id;
 	}
 

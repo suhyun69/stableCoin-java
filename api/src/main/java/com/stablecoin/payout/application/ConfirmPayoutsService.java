@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,19 +15,18 @@ import org.springframework.stereotype.Service;
 import com.stablecoin.chain.domain.ChainReceipt;
 import com.stablecoin.chain.domain.ChainTransaction;
 import com.stablecoin.payout.application.port.in.ConfirmPayoutsUseCase;
+import com.stablecoin.payout.application.port.out.ChainTransactionStorePort;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
-import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
-import com.stablecoin.payout.domain.DispatchStatus;
 import com.stablecoin.payout.domain.Payout;
-import com.stablecoin.payout.domain.PayoutDispatch;
+import com.stablecoin.payout.domain.PayoutChainTransaction;
 import com.stablecoin.payout.domain.PayoutStatus;
 
 /**
- * 노드에 보낸(BROADCAST) 지급 트랜잭션의 영수증을 확인한다.
+ * 노드에 보낸(PENDING, MINED_SUCCESS) 지급 트랜잭션의 영수증을 확인한다.
  * <ul>
  * <li>영수증 블록 위로 required-confirmations 개 블록이 쌓일 때까지(영수증 블록 포함) 기다린다. 그 전에 블록 재구성으로
- * 영수증이 사라지면 다시 영수증을 기다린다.</li>
+ * 영수증이 사라지면 PENDING 으로 돌아가 다시 영수증을 기다린다.</li>
  * <li>성공 → 노드에 기록된 트랜잭션의 보낸 지갑, 받는 지갑, 금액이 지급 내용과 같으면 정산
  * (SETTLED, 가맹점 알림 MERCHANT_PAYOUT_SETTLED). 다르면 REQUIRES_REVIEW.</li>
  * <li>실패(revert) → FAILED (가맹점 알림 MERCHANT_PAYOUT_FAILED)</li>
@@ -44,7 +44,7 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 
 	private final PayoutRepositoryPort payouts;
 
-	private final PayoutDispatchStorePort dispatches;
+	private final ChainTransactionStorePort chainTransactions;
 
 	private final PayoutChainPort chain;
 
@@ -54,7 +54,7 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 
 	private final int requiredConfirmations;
 
-	public ConfirmPayoutsService(PayoutRepositoryPort payouts, PayoutDispatchStorePort dispatches,
+	public ConfirmPayoutsService(PayoutRepositoryPort payouts, ChainTransactionStorePort chainTransactions,
 			PayoutChainPort chain, PayoutSettlementService settlement,
 			@Value("${payout.confirmation.review-after:10m}") Duration reviewAfter,
 			@Value("${payout.confirmation.required-confirmations:1}") int requiredConfirmations) {
@@ -62,7 +62,7 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 			throw new IllegalArgumentException("payout.confirmation.required-confirmations must be at least 1");
 		}
 		this.payouts = payouts;
-		this.dispatches = dispatches;
+		this.chainTransactions = chainTransactions;
 		this.chain = chain;
 		this.settlement = settlement;
 		this.reviewAfter = reviewAfter;
@@ -72,52 +72,57 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 	@Override
 	public int confirmBroadcast() {
 		int changed = 0;
-		for (PayoutDispatch dispatch : dispatches.findByStatus(DispatchStatus.BROADCAST, BATCH)) {
-			if (confirm(dispatch)) {
+		for (PayoutChainTransaction tx : chainTransactions.findAwaitingConfirmation(BATCH)) {
+			if (confirm(tx)) {
 				changed++;
 			}
 		}
 		return changed;
 	}
 
-	private boolean confirm(PayoutDispatch dispatch) {
-		Optional<ChainReceipt> receipt = chain.receipt(dispatch.txHash());
-		if (receipt.isEmpty() && nonceTakenByAnotherTransaction(dispatch)) {
+	private boolean confirm(PayoutChainTransaction tx) {
+		UUID payoutId = tx.payoutId();
+		Optional<ChainReceipt> receipt = chain.receipt(tx.transactionHash());
+		if (receipt.isEmpty() && nonceTakenByAnotherTransaction(tx)) {
 			// 확정 nonce를 읽는 사이에 이 트랜잭션이 블록에 들어갔을 수 있으므로 한 번 더 본다
-			receipt = chain.receipt(dispatch.txHash());
+			receipt = chain.receipt(tx.transactionHash());
 			if (receipt.isEmpty()) {
-				String detail = "nonce " + dispatch.nonce() + " of " + dispatch.fromAddress()
-						+ " was used by another transaction";
-				log.error("Payout {} transaction {} can never be mined: {}", dispatch.payoutId(), dispatch.txHash(),
+				String detail = "nonce " + tx.nonce() + " of " + tx.senderAddress() + " was used by another transaction";
+				log.error("Payout {} transaction {} can never be mined: {}", payoutId, tx.transactionHash(), detail);
+				return settlement.requireReviewNotOnChain(payoutId, PayoutStatus.AWAITING_CONFIRMATION, "NONCE_CONFLICT",
 						detail);
-				return settlement.requireReview(dispatch.payoutId(), PayoutStatus.AWAITING_CONFIRMATION,
-						DispatchStatus.BROADCAST, "NONCE_CONFLICT", detail);
 			}
 		}
 		if (receipt.isPresent()) {
 			long confirmations = chain.latestBlockNumber() - receipt.get().blockNumber() + 1;
+			chainTransactions.recordIncluded(payoutId, receipt.get().blockNumber(), confirmations,
+					receipt.get().success());
 			if (confirmations < requiredConfirmations) {
-				log.debug("Payout {} transaction {} has {}/{} confirmations", dispatch.payoutId(), dispatch.txHash(),
+				log.debug("Payout {} transaction {} has {}/{} confirmations", payoutId, tx.transactionHash(),
 						confirmations, requiredConfirmations);
 				return false;
 			}
 			if (!receipt.get().success()) {
-				return settlement.failOnChain(dispatch.payoutId(), dispatch.txHash());
+				return settlement.failOnChain(payoutId);
 			}
-			String mismatch = mismatch(dispatch);
+			String mismatch = mismatch(tx);
 			if (mismatch != null) {
-				log.error("Payout {} transaction {} does not match the payout: {}", dispatch.payoutId(),
-						dispatch.txHash(), mismatch);
-				return settlement.requireReview(dispatch.payoutId(), PayoutStatus.AWAITING_CONFIRMATION,
-						DispatchStatus.BROADCAST, "TRANSFER_MISMATCH", mismatch);
+				log.error("Payout {} transaction {} does not match the payout: {}", payoutId, tx.transactionHash(),
+						mismatch);
+				return settlement.requireReview(payoutId, PayoutStatus.AWAITING_CONFIRMATION, "TRANSFER_MISMATCH",
+						mismatch);
 			}
-			return settlement.settle(dispatch.payoutId(), dispatch.txHash());
+			return settlement.settle(payoutId);
 		}
-		if (dispatch.updatedAt() != null && dispatch.updatedAt().plus(reviewAfter).isBefore(Instant.now())) {
-			log.warn("Payout {} transaction {} has no receipt after {}; requires review", dispatch.payoutId(),
-					dispatch.txHash(), reviewAfter);
-			return settlement.requireReview(dispatch.payoutId(), PayoutStatus.AWAITING_CONFIRMATION,
-					DispatchStatus.BROADCAST, "CONFIRMATION_TIMEOUT", "no receipt after " + reviewAfter);
+		if (tx.includedBlockNumber() != null) {
+			log.warn("Payout {} transaction {} lost its receipt; waiting again", payoutId, tx.transactionHash());
+			chainTransactions.markNotIncluded(payoutId);
+		}
+		if (tx.broadcastAt() != null && tx.broadcastAt().plus(reviewAfter).isBefore(Instant.now())) {
+			log.warn("Payout {} transaction {} has no receipt after {}; requires review", payoutId, tx.transactionHash(),
+					reviewAfter);
+			return settlement.requireReview(payoutId, PayoutStatus.AWAITING_CONFIRMATION, "CONFIRMATION_TIMEOUT",
+					"no receipt after " + reviewAfter);
 		}
 		return false;
 	}
@@ -125,25 +130,24 @@ public class ConfirmPayoutsService implements ConfirmPayoutsUseCase {
 	/**
 	 * 보낸 지갑에서 블록에 들어간 트랜잭션 수가 이 nonce보다 크면, 이 nonce 자리는 이미 쓰였다.
 	 */
-	private boolean nonceTakenByAnotherTransaction(PayoutDispatch dispatch) {
-		return dispatch.nonce() != null && dispatch.fromAddress() != null
-				&& chain.confirmedNonce(dispatch.fromAddress()) > dispatch.nonce();
+	private boolean nonceTakenByAnotherTransaction(PayoutChainTransaction tx) {
+		return chain.confirmedNonce(tx.senderAddress()) > tx.nonce();
 	}
 
 	/**
 	 * 노드에 기록된 트랜잭션이 지급 내용(지급 지갑 → 받는 지갑, 금액)과 다르면 그 이유, 같으면 null.
 	 */
-	private String mismatch(PayoutDispatch dispatch) {
-		Payout payout = payouts.findById(dispatch.payoutId()).orElse(null);
+	private String mismatch(PayoutChainTransaction saved) {
+		Payout payout = payouts.findById(saved.payoutId()).orElse(null);
 		if (payout == null) {
 			return "payout not found";
 		}
-		ChainTransaction tx = chain.transaction(dispatch.txHash()).orElse(null);
+		ChainTransaction tx = chain.transaction(saved.transactionHash()).orElse(null);
 		if (tx == null) {
 			return "transaction not found on the node";
 		}
-		if (!sameAddress(tx.from(), dispatch.fromAddress())) {
-			return "sent from " + tx.from() + ", expected " + dispatch.fromAddress();
+		if (!sameAddress(tx.from(), saved.senderAddress())) {
+			return "sent from " + tx.from() + ", expected " + saved.senderAddress();
 		}
 		if (!sameAddress(tx.to(), payout.recipientAddress())) {
 			return "sent to " + tx.to() + ", expected " + payout.recipientAddress();

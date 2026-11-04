@@ -103,7 +103,7 @@ com.stablecoin.chain
 | `POST` | `/api/chain/transfers` | `from` 지갑에서 ETH 전송 |
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
 | `POST` | `/api/payouts` | 가맹점 지급 요청 (`Idempotency-Key` 헤더 필수) |
-| `GET` | `/api/payouts/{payoutId}` | 지급 상태와 체인 전송 기록 조회 |
+| `GET` | `/api/payouts/{payoutId}` | 지급 상태와 체인 트랜잭션 조회 |
 | `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
 `/actuator/health`는 노드를 포함한 전체 상태를 보여줍니다.
@@ -157,7 +157,7 @@ curl -i -X POST http://localhost:8080/api/payouts \
   -d '{"merchantId":"merchant_demo_01","recipientAddress":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amountEth":25.5}'
 ```
 
-응답의 `id`로 지급 상태를 조회합니다. 지급 상태와 체인 전송 기록(`dispatch`: 전송 상태, 보낸 지갑, nonce, 트랜잭션 해시, 마지막 오류)을 나눠서 보여 줍니다. DB만 읽으므로 노드가 꺼져 있어도 조회할 수 있고, 소비자가 아직 처리하지 않았으면 `dispatch`는 `null`입니다. 서명한 트랜잭션 원본은 내보내지 않습니다.
+응답의 `id`로 지급 상태를 조회합니다. 지급 상태와 체인 트랜잭션(`dispatch`: 체인 상태, 보낸 지갑, nonce, 트랜잭션 해시, 포함된 블록, 쌓인 블록 수, 마지막 오류)을 나눠서 보여 줍니다. DB만 읽으므로 노드가 꺼져 있어도 조회할 수 있고, 아직 서명하지 않았으면 `dispatch`는 `null`입니다. 서명한 트랜잭션 원본은 내보내지 않습니다.
 
 ```bash
 curl http://localhost:8080/api/payouts/{id}
@@ -166,7 +166,7 @@ curl http://localhost:8080/api/payouts/{id}
 ```json
 {"id":"…","merchantId":"merchant_demo_01","recipientAddress":"0x7099…","amountWei":"25500000000000000000","amountEth":"25.5",
  "status":"AWAITING_CONFIRMATION",
- "dispatch":{"status":"BROADCAST","fromAddress":"0xf39f…","nonce":12,"transactionHash":"0xabc…","lastError":null,"updatedAt":"…"}}
+ "dispatch":{"status":"PENDING","fromAddress":"0xf39f…","nonce":12,"transactionHash":"0xabc…","includedBlockNumber":null,"confirmations":0,"lastError":null}}
 ```
 
 **멱등성** (`Idempotency-Key` 헤더 필수)
@@ -182,7 +182,7 @@ curl http://localhost:8080/api/payouts/{id}
 - `payout_status_history`: 상태가 바뀔 때마다 한 줄 (처음: `NULL → REQUESTED`, `PAYOUT_CREATED`)
 - `outbox_messages`: 나중에 처리할 일. `PENDING` 상태로 쌓이며, payload에 받는 주소와 금액(wei)을 담음
 
-`V6__chain_ledger_tables.sql`은 TS 최종본의 `chain_transactions`, `chain_nonce_allocations`, `reconciliation_findings`와 `payouts.updated_at`을 만듭니다. 스키마만 있고 앱은 아직 이 테이블들에 쓰지 않습니다. 지금 지급 전송 기록은 `payout_dispatches`가 맡습니다. nonce 순서는 advisory lock이 맡으므로 `chain_nonce_allocations`는 앞으로도 쓰지 않습니다.
+`V6__chain_ledger_tables.sql`은 TS 최종본의 `chain_transactions`, `chain_nonce_allocations`, `reconciliation_findings`와 `payouts.updated_at`을 만들고, `V7__move_dispatch_state_to_chain_transactions.sql`은 서명 이후의 전송 상태를 `chain_transactions`로 옮깁니다. `payout_dispatches`에는 소비자가 지급을 맡았다는 `STARTED` 표시만 남습니다. nonce 순서는 advisory lock이 맡으므로 `chain_nonce_allocations`는 쓰지 않습니다. `reconciliation_findings`도 아직 쓰지 않습니다.
 
 ### outbox 발행기 (Kafka)
 
@@ -220,29 +220,32 @@ POST /api/payouts ─(한 트랜잭션)→ payouts + history + outbox(PENDING)
 
 ```
 PAYOUT_REQUESTED (Kafka)
-  → 소비자: 전송 기록 STARTED (지급마다 한 번만)
-           → 서명 → 서명한 트랜잭션을 DB에 먼저 저장 (SIGNED)
-           → 노드에 보냄 → 지급 AWAITING_CONFIRMATION, 전송 기록 BROADCAST
+  → 소비자: payout_dispatches STARTED (지급마다 한 번만)
+           → 서명 → 서명한 트랜잭션을 chain_transactions 에 먼저 저장 (SIGNED)
+           → 노드에 보냄 → 지급 AWAITING_CONFIRMATION, 체인 트랜잭션 PENDING
   → 확정 확인 (2초마다): 확정 블록 수만큼 쌓이고 영수증 성공 + 보낸·받는 지갑과 금액 일치 → 정산: 지급 SETTLED + 가맹점 알림 MERCHANT_PAYOUT_SETTLED (outbox → Kafka)
 ```
 
-| 상황 | 지급 상태 | 전송 기록 (`payout_dispatches`) | 가맹점 알림 |
+| 상황 | 지급 상태 | 체인 트랜잭션 (`chain_transactions`) | 가맹점 알림 |
 | --- | --- | --- | --- |
-| 노드가 받음 | `AWAITING_CONFIRMATION` | `BROADCAST` | |
-| 블록에 들어갔지만 확정 블록 수(`payout.confirmation.required-confirmations`)가 아직 안 쌓임 | `AWAITING_CONFIRMATION` | `BROADCAST` | |
+| 보냈는데 노드가 받았는지 모름 (연결 불가, timeout) | `REQUESTED` | `BROADCAST_UNKNOWN` | |
+| 노드가 받음 | `AWAITING_CONFIRMATION` | `PENDING` | |
+| 블록에 들어갔지만 확정 블록 수(`payout.confirmation.required-confirmations`)가 아직 안 쌓임 | `AWAITING_CONFIRMATION` | `MINED_SUCCESS` | |
 | 블록에서 성공 | **`SETTLED`** | `CONFIRMED` | `MERCHANT_PAYOUT_SETTLED` |
-| 블록에서 실패 (revert) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
-| 서명할 때 노드가 거부 (잔액 부족 등, 아무것도 보내지 않음) | `FAILED` | `FAILED` | `MERCHANT_PAYOUT_FAILED` |
-| 영수증이 없는데 그 nonce를 다른 트랜잭션이 이미 씀 (지급 밖에서 같은 지갑을 쓴 경우) | `REQUIRES_REVIEW` (`NONCE_CONFLICT`) | `REQUIRES_REVIEW` | |
-| 성공했지만 노드의 트랜잭션이 지급과 다름 (보낸 지갑, 받는 지갑, 금액) | `REQUIRES_REVIEW` (`TRANSFER_MISMATCH`) | `REQUIRES_REVIEW` | |
-| 보낼 때 노드가 거부 / 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` | `REQUIRES_REVIEW` | |
+| 블록에서 실패 (revert) | `FAILED` | `MINED_REVERTED` | `MERCHANT_PAYOUT_FAILED` |
+| 서명할 때 노드가 거부 (잔액 부족 등, 아무것도 보내지 않음) | `FAILED` | 없음 (사유는 로그에만 남음) | `MERCHANT_PAYOUT_FAILED` |
+| 영수증이 없는데 그 nonce를 다른 트랜잭션이 이미 씀 (지급 밖에서 같은 지갑을 쓴 경우) | `REQUIRES_REVIEW` (`NONCE_CONFLICT`) | `FAILED` | |
+| 성공했지만 노드의 트랜잭션이 지급과 다름 (보낸 지갑, 받는 지갑, 금액) | `REQUIRES_REVIEW` (`TRANSFER_MISMATCH`) | `MINED_SUCCESS` | |
+| 보낼 때 노드가 거부 | `REQUIRES_REVIEW` (`BROADCAST_REJECTED`) | `FAILED` | |
+| 10분(`payout.confirmation.review-after`) 동안 영수증 없음 | `REQUIRES_REVIEW` (`CONFIRMATION_TIMEOUT`) | `PENDING` | |
 
 **두 번 보내지 않고, 멈추지도 않게**
-- **메시지마다 한 번만 (inbox):** 받은 메시지를 `processed_messages`(`consumer_name`, `message_id`)에 기록하고, 같은 트랜잭션에서 전송 기록(`STARTED`)을 만듭니다. 같은 메시지를 다시 받으면 건너뜁니다.
+- **메시지마다 한 번만 (inbox):** 받은 메시지를 `processed_messages`(`consumer_name`, `message_id`)에 기록하고, 같은 트랜잭션에서 `payout_dispatches`(`STARTED`)를 만듭니다. 같은 메시지를 다시 받으면 건너뜁니다.
 - **지급마다 한 번만:** `payout_dispatches.payout_id`가 UNIQUE라 메시지 ID가 달라도 전송은 한 번만 진행합니다.
 - **보내기 전에 저장:** 서명한 트랜잭션(raw, hash, nonce)을 DB에 커밋한 뒤 노드에 보냅니다. 보내다 죽어도 같은 트랜잭션을 다시 보내면 되고, 같은 nonce라 두 번 나가지 않습니다. 노드가 이미 아는 트랜잭션이면 성공으로 봅니다.
-- **인스턴스 간 nonce 잠금:** 서명하는 트랜잭션 안에서 지급 지갑 주소로 Postgres advisory lock(`pg_advisory_xact_lock`)을 겁니다. nonce는 `max(노드 pending nonce, SIGNED 최대 nonce + 1)`이고, 잠금은 SIGNED 저장을 커밋할 때 풀리므로 앱을 여러 대 띄워도 다음 인스턴스가 방금 쓴 nonce를 봅니다. 번호를 미리 올려 두는 카운터가 아니라서 서명이 실패해도 nonce가 비지 않습니다.
-- **멈춘 전송 이어가기:** `STARTED`/`SIGNED`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 전송은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우).
+- **인스턴스 간 nonce 잠금:** 서명하는 트랜잭션 안에서 지급 지갑 주소로 Postgres advisory lock(`pg_advisory_xact_lock`)을 겁니다. nonce는 `max(노드 pending nonce, SIGNED·BROADCAST_UNKNOWN 최대 nonce + 1)`이고, 잠금은 SIGNED 저장을 커밋할 때 풀리므로 앱을 여러 대 띄워도 다음 인스턴스가 방금 쓴 nonce를 봅니다. 번호를 미리 올려 두는 카운터가 아니라서 서명이 실패해도 nonce가 비지 않습니다.
+- **멈춘 전송 이어가기:** 서명 전이거나 `SIGNED`/`BROADCAST_UNKNOWN`에 30초(`payout.dispatcher.stuck-after`) 넘게 머문 `REQUESTED` 지급은 확정 확인 작업이 이어서 진행합니다 (예: 노드가 잠깐 꺼졌던 경우). 이미 서명했으면 같은 트랜잭션을 다시 보냅니다.
+- **nonce 중복 기록:** `chain_transactions`의 `UNIQUE (sender_address, nonce)`가 같은 nonce의 두 번째 기록을 막습니다. 고른 nonce가 이미 기록돼 있으면 아무것도 보내지 않고 `REQUIRES_REVIEW`(`NONCE_ALREADY_RECORDED`)로 보냅니다. **anvil만 재시작하면 nonce가 0부터 다시 시작해 새 지급이 모두 이렇게 되므로, 로컬에서는 anvil을 재시작할 때 DB도 함께 비워야 합니다.**
 - **확정 블록 수:** 영수증 블록을 포함해 `required-confirmations`개 블록이 쌓인 뒤에 성공(SETTLED)이나 실패(FAILED)를 정합니다. 그 전에 블록 재구성으로 영수증이 사라지면 다시 영수증을 기다립니다. anvil은 기본으로 거래가 있을 때만 블록을 만들므로, 로컬에서 2 이상으로 두면 다른 거래가 없을 때 정산이 멈춥니다 (`anvil --block-time 1`로 띄우면 됩니다).
 - **정산 전 내용 확인:** 정산하기 전에 `eth_getTransactionByHash`로 보낸 지갑, 받는 지갑, 금액이 지급과 같은지 확인합니다. 다르면 정산하지 않고 `REQUIRES_REVIEW`로 보냅니다.
 - **nonce 충돌 감지:** 영수증이 없으면 보낸 지갑의 확정 nonce(`eth_getTransactionCount(지갑, "latest")`)를 봅니다. 그 값이 이 트랜잭션의 nonce보다 크면 그 자리는 다른 트랜잭션이 이미 썼으므로, 이 트랜잭션은 블록에 들어갈 수 없습니다. 그 사이에 들어갔을 수 있으니 영수증을 한 번 더 확인하고, 그래도 없으면 `review-after`를 기다리지 않고 바로 `REQUIRES_REVIEW`로 보냅니다. `/api/chain/transfers`로 지급 지갑에서 직접 보내면 생길 수 있습니다.

@@ -44,18 +44,9 @@ class PayoutPersistenceAdapter implements PayoutRepositoryPort {
 	}
 
 	@Override
-	public boolean transition(UUID id, PayoutStatus expected, PayoutStatus next, String transactionHash) {
-		return jdbc.update("""
-				UPDATE payouts SET status = ?, transaction_hash = COALESCE(?, transaction_hash)
-				WHERE id = ? AND status = ?""", next.name(), transactionHash, id, expected.name()) == 1;
-	}
-
-	@Override
-	public Optional<String> findTransactionHash(UUID id) {
-		return jdbc.queryForList("SELECT transaction_hash FROM payouts WHERE id = ?", String.class, id)
-			.stream()
-			.filter(java.util.Objects::nonNull)
-			.findFirst();
+	public boolean transition(UUID id, PayoutStatus expected, PayoutStatus next) {
+		return jdbc.update("UPDATE payouts SET status = ?, updated_at = now() WHERE id = ? AND status = ?", next.name(),
+				id, expected.name()) == 1;
 	}
 
 }

@@ -35,10 +35,10 @@ import com.stablecoin.chain.domain.SignedTransaction;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.out.PayoutChainPort;
-import com.stablecoin.payout.application.port.out.PayoutDispatchStorePort;
+import com.stablecoin.payout.application.port.out.ChainTransactionStorePort;
 import com.stablecoin.payout.application.port.in.GetPayoutUseCase;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
-import com.stablecoin.payout.domain.DispatchStatus;
+import com.stablecoin.payout.domain.ChainTransactionStatus;
 
 /**
  * 실제 Postgres에서 지급 전송과 정산의 상태 변화를 확인한다. 체인은 가짜(PayoutChainPort)로 바꿔 끼운다.
@@ -67,7 +67,7 @@ class DispatchAndSettlementTest {
 	private PayoutSettlementService settlement;
 
 	@Autowired
-	private PayoutDispatchStorePort dispatches;
+	private ChainTransactionStorePort chainTransactions;
 
 	@Autowired
 	private PayoutRepositoryPort payouts;
@@ -88,6 +88,7 @@ class DispatchAndSettlementTest {
 	void setUp() {
 		jdbc.update("DELETE FROM outbox_messages");
 		jdbc.update("DELETE FROM processed_messages");
+		jdbc.update("DELETE FROM chain_transactions");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
 		jdbc.update("DELETE FROM payouts");
@@ -114,11 +115,11 @@ class DispatchAndSettlementTest {
 		then(chain).should(times(1)).broadcast(any());
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION")
 			.containsEntry("transaction_hash", "0xhash-0");
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST")
-			.containsEntry("tx_hash", "0xhash-0")
-			.containsEntry("signed_tx", "0x02raw-0")
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "PENDING")
+			.containsEntry("transaction_hash", "0xhash-0")
+			.containsEntry("raw_transaction", "0x02raw-0")
 			.containsEntry("nonce", 0L)
-			.containsEntry("from_address", WALLET);
+			.containsEntry("sender_address", WALLET);
 		assertThat(history(payoutId)).containsExactly("NULL->REQUESTED PAYOUT_CREATED",
 				"REQUESTED->AWAITING_CONFIRMATION TRANSACTION_BROADCAST");
 	}
@@ -185,11 +186,11 @@ class DispatchAndSettlementTest {
 		// Kafka가 같은 메시지를 다시 줘도 건너뛴다
 		dispatch.dispatch(payoutId, "out-redelivery");
 		then(chain).should(times(1)).broadcast(any());
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "SIGNED");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST_UNKNOWN");
 
 		// 멈춘 전송은 재개 작업이 이어간다
 		dispatch.resumeStuck();
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "PENDING");
 		then(chain).should(times(1)).sign(any(), any(), anyLong());
 	}
 
@@ -207,7 +208,8 @@ class DispatchAndSettlementTest {
 		catch (ChainUnavailableException expected) {
 			// 노드가 꺼져 있었다. 서명한 트랜잭션은 이미 저장됐다.
 		}
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "SIGNED").containsEntry("tx_hash", "0xhash-0");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST_UNKNOWN")
+			.containsEntry("transaction_hash", "0xhash-0");
 		assertThat(payout(payoutId)).containsEntry("status", "REQUESTED");
 
 		assertThat(dispatch.resumeStuck()).isEqualTo(1);
@@ -216,7 +218,7 @@ class DispatchAndSettlementTest {
 		then(chain).should(times(1)).sign(any(), any(), anyLong());
 		then(chain).should(times(2)).broadcast(new SignedTransaction(WALLET, RECIPIENT, AMOUNT, 0, "0x02raw-0",
 				"0xhash-0"));
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "BROADCAST");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "PENDING");
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
 	}
 
@@ -251,8 +253,8 @@ class DispatchAndSettlementTest {
 
 		then(chain).should(never()).broadcast(any());
 		assertThat(payout(payoutId)).containsEntry("status", "FAILED");
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "FAILED");
-		assertThat((String) dispatchRow(payoutId).get("last_error")).contains("Insufficient funds");
+		// 아무것도 서명하지 않았으므로 체인 트랜잭션도 없다
+		assertThat(jdbc.queryForObject("SELECT count(*) FROM chain_transactions", Integer.class)).isZero();
 		assertThat(history(payoutId)).last().isEqualTo("REQUESTED->FAILED TRANSFER_REJECTED");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED", "MERCHANT_PAYOUT_FAILED");
 	}
@@ -265,7 +267,7 @@ class DispatchAndSettlementTest {
 		dispatch.dispatch(payoutId);
 
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "FAILED").containsEntry("last_error", "nonce too low");
 		assertThat(history(payoutId)).last().isEqualTo("REQUESTED->REQUIRES_REVIEW BROADCAST_REJECTED");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
 	}
@@ -278,7 +280,7 @@ class DispatchAndSettlementTest {
 
 		assertThat(confirm.confirmBroadcast()).isEqualTo(1);
 		// 같은 정산을 한 번 더 받아도 그대로 둔다
-		assertThat(settlement.settle(payoutId, "0xhash-0")).isFalse();
+		assertThat(settlement.settle(payoutId)).isFalse();
 		assertThat(confirm.confirmBroadcast()).isZero();
 
 		assertThat(payout(payoutId)).containsEntry("status", "SETTLED").containsEntry("transaction_hash", "0xhash-0");
@@ -301,7 +303,7 @@ class DispatchAndSettlementTest {
 	void settlementIsRefusedFromTheWrongState() {
 		UUID payoutId = createPayout("settle-wrong-state");
 
-		assertThat(settlement.settle(payoutId, "0xwhatever")).isFalse();
+		assertThat(settlement.settle(payoutId)).isFalse();
 
 		assertThat(payout(payoutId)).containsEntry("status", "REQUESTED");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
@@ -316,7 +318,7 @@ class DispatchAndSettlementTest {
 		confirm.confirmBroadcast();
 
 		assertThat(payout(payoutId)).containsEntry("status", "FAILED");
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "FAILED");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "MINED_REVERTED");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED", "MERCHANT_PAYOUT_FAILED");
 	}
 
@@ -330,7 +332,7 @@ class DispatchAndSettlementTest {
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
 
 		// 영수증 없이 10분이 지났다. Duration.ZERO 로 확인하면 DB 컨테이너와 JVM의 시계가 몇 ms만 달라도 결과가 바뀐다
-		jdbc.update("UPDATE payout_dispatches SET updated_at = now() - interval '11 minutes' WHERE payout_id = ?",
+		jdbc.update("UPDATE chain_transactions SET broadcast_at = now() - interval '11 minutes' WHERE payout_id = ?",
 				payoutId);
 		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isEqualTo(1);
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
@@ -360,11 +362,17 @@ class DispatchAndSettlementTest {
 		given(chain.latestBlockNumber()).willReturn(8L);
 		assertThat(threeBlocks.confirmBroadcast()).isZero();
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "MINED_SUCCESS")
+			.containsEntry("included_block_number", 7L)
+			.containsEntry("confirmations", 2L);
 
 		// 기다리는 동안 블록 재구성으로 영수증이 사라져도 실패나 확인 필요로 보내지 않고 다시 기다린다
 		given(chain.receipt("0xhash-0")).willReturn(Optional.empty());
 		assertThat(confirmService(Duration.ofMinutes(10), 3).confirmBroadcast()).isZero();
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "PENDING")
+			.containsEntry("included_block_number", null)
+			.containsEntry("confirmations", 0L);
 
 		// 다시 블록에 들어가고 3개 블록이 쌓이면 정산
 		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
@@ -399,7 +407,7 @@ class DispatchAndSettlementTest {
 		assertThat(confirm.confirmBroadcast()).isEqualTo(1);
 
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
-		assertThat(dispatchRow(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "MINED_SUCCESS");
 		assertThat((String) dispatchRow(payoutId).get("last_error")).contains("sent to 0x3c44");
 		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW TRANSFER_MISMATCH");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
@@ -430,7 +438,8 @@ class DispatchAndSettlementTest {
 
 		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
 		assertThat(history(payoutId)).last().isEqualTo("AWAITING_CONFIRMATION->REQUIRES_REVIEW NONCE_CONFLICT");
-		assertThat(getPayout.get(payoutId).dispatch().lastError())
+		assertThat(dispatchRow(payoutId)).containsEntry("status", "FAILED");
+		assertThat(getPayout.get(payoutId).chainTransaction().lastError())
 			.isEqualTo("nonce 0 of " + WALLET + " was used by another transaction");
 		assertThat(outboxTypes(payoutId)).containsExactly("PAYOUT_REQUESTED");
 	}
@@ -458,7 +467,35 @@ class DispatchAndSettlementTest {
 		assertThat(confirmService(Duration.ofMinutes(10), 1).confirmBroadcast()).isZero();
 
 		assertThat(payout(payoutId)).containsEntry("status", "AWAITING_CONFIRMATION");
-		assertThat(getPayout.get(payoutId).dispatch().status()).isEqualTo(DispatchStatus.BROADCAST);
+		assertThat(getPayout.get(payoutId).chainTransaction().status()).isEqualTo(ChainTransactionStatus.PENDING);
+	}
+
+	@Test
+	void nonceAlreadyRecordedRequiresReviewAndSendsNothing() {
+		UUID first = createPayout("nonce-dup-1");
+		dispatch.dispatch(first);
+		nonces.set(0); // 노드만 재시작해서 nonce 0 이 다시 비었다
+
+		UUID second = createPayout("nonce-dup-2");
+		dispatch.dispatch(second);
+
+		assertThat(payout(second)).containsEntry("status", "REQUIRES_REVIEW").containsEntry("transaction_hash", null);
+		assertThat(history(second)).last().isEqualTo("REQUESTED->REQUIRES_REVIEW NONCE_ALREADY_RECORDED");
+		then(chain).should(times(1)).broadcast(any());
+		assertThat(dispatch.resumeStuck()).isZero();
+	}
+
+	@Test
+	void payoutUnderReviewIsNotConfirmedOrResumed() {
+		UUID payoutId = createPayout("review-stays");
+		org.mockito.Mockito.doThrow(new ChainException("nonce too low")).when(chain).broadcast(any());
+		dispatch.dispatch(payoutId);
+		given(chain.receipt("0xhash-0")).willReturn(Optional.of(receipt(true)));
+
+		assertThat(confirm.confirmBroadcast()).isZero();
+		assertThat(dispatch.resumeStuck()).isZero();
+
+		assertThat(payout(payoutId)).containsEntry("status", "REQUIRES_REVIEW");
 	}
 
 	@Test
@@ -468,7 +505,7 @@ class DispatchAndSettlementTest {
 	}
 
 	private ConfirmPayoutsService confirmService(Duration reviewAfter, int requiredConfirmations) {
-		return new ConfirmPayoutsService(payouts, dispatches, chain, settlement, reviewAfter, requiredConfirmations);
+		return new ConfirmPayoutsService(payouts, chainTransactions, chain, settlement, reviewAfter, requiredConfirmations);
 	}
 
 	/** 노드에 기록된 지급 트랜잭션. 보낸 지갑은 대소문자를 바꿔 넣어 주소를 대소문자 구분 없이 비교하는지 확인한다. */
@@ -488,13 +525,16 @@ class DispatchAndSettlementTest {
 	}
 
 	private Map<String, Object> payout(UUID payoutId) {
-		return jdbc.queryForMap("SELECT status, transaction_hash FROM payouts WHERE id = ?", payoutId);
+		return jdbc.queryForMap("""
+				SELECT p.status, ct.transaction_hash
+				FROM payouts p LEFT JOIN chain_transactions ct ON ct.payout_id = p.id WHERE p.id = ?""", payoutId);
 	}
 
 	private Map<String, Object> dispatchRow(UUID payoutId) {
 		return jdbc.queryForMap("""
-				SELECT status, from_address, nonce, tx_hash, signed_tx, last_error
-				FROM payout_dispatches WHERE payout_id = ?""", payoutId);
+				SELECT status, sender_address, nonce, transaction_hash, raw_transaction, last_error, included_block_number,
+				       confirmations
+				FROM chain_transactions WHERE payout_id = ?""", payoutId);
 	}
 
 	private List<String> history(UUID payoutId) {

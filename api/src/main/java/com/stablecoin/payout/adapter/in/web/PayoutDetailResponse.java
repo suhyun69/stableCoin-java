@@ -1,15 +1,14 @@
 package com.stablecoin.payout.adapter.in.web;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import com.stablecoin.chain.domain.Eth;
 import com.stablecoin.payout.application.port.in.GetPayoutUseCase.PayoutView;
-import com.stablecoin.payout.domain.DispatchStatus;
+import com.stablecoin.payout.domain.ChainTransactionStatus;
 import com.stablecoin.payout.domain.Payout;
-import com.stablecoin.payout.domain.PayoutDispatch;
+import com.stablecoin.payout.domain.PayoutChainTransaction;
 import com.stablecoin.payout.domain.PayoutStatus;
 
 /**
@@ -23,20 +22,21 @@ public record PayoutDetailResponse(
 		@Schema(description = "지급 금액 (wei)", example = "25500000000000000000") String amountWei,
 		@Schema(description = "지급 금액 (ETH)", example = "25.5") String amountEth,
 		@Schema(description = "지급 상태") PayoutStatus status,
-		@Schema(description = "체인 전송 기록. 소비자가 아직 처리하지 않았으면 null", nullable = true) Dispatch dispatch) {
+		@Schema(description = "체인 트랜잭션. 아직 서명하지 않았으면 null", nullable = true) Dispatch dispatch) {
 
-	@Schema(description = "체인 전송 기록 (payout_dispatches)")
+	@Schema(description = "체인 트랜잭션 (chain_transactions)")
 	public record Dispatch(
-			@Schema(description = "전송 상태") DispatchStatus status,
-			@Schema(description = "보낸 지갑. 서명 전이면 null", nullable = true) String fromAddress,
-			@Schema(description = "nonce. 서명 전이면 null", nullable = true) Long nonce,
-			@Schema(description = "트랜잭션 해시. 서명 전이면 null", nullable = true) String transactionHash,
-			@Schema(description = "실패하거나 확인 필요로 바뀐 이유", nullable = true) String lastError,
-			@Schema(description = "전송 기록이 마지막으로 바뀐 시각") Instant updatedAt) {
+			@Schema(description = "체인 상태") ChainTransactionStatus status,
+			@Schema(description = "보낸 지갑") String fromAddress,
+			@Schema(description = "nonce") long nonce,
+			@Schema(description = "트랜잭션 해시") String transactionHash,
+			@Schema(description = "포함된 블록 번호. 블록에 들어가기 전이면 null", nullable = true) Long includedBlockNumber,
+			@Schema(description = "쌓인 블록 수 (포함된 블록 포함)") long confirmations,
+			@Schema(description = "실패하거나 확인 필요로 바뀐 이유", nullable = true) String lastError) {
 
-		static Dispatch of(PayoutDispatch dispatch) {
-			return (dispatch == null) ? null : new Dispatch(dispatch.status(), dispatch.fromAddress(), dispatch.nonce(),
-					dispatch.txHash(), dispatch.lastError(), dispatch.updatedAt());
+		static Dispatch of(PayoutChainTransaction tx) {
+			return (tx == null) ? null : new Dispatch(tx.status(), tx.senderAddress(), tx.nonce(), tx.transactionHash(),
+					tx.includedBlockNumber(), tx.confirmations(), tx.lastError());
 		}
 
 	}
@@ -45,7 +45,7 @@ public record PayoutDetailResponse(
 		Payout payout = view.payout();
 		return new PayoutDetailResponse(payout.id(), payout.merchantId(), payout.recipientAddress(),
 				payout.amountWei().toString(), Eth.format(payout.amountWei()), payout.status(),
-				Dispatch.of(view.dispatch()));
+				Dispatch.of(view.chainTransaction()));
 	}
 
 }
