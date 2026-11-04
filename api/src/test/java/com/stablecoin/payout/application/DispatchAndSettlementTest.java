@@ -88,6 +88,7 @@ class DispatchAndSettlementTest {
 	void setUp() {
 		jdbc.update("DELETE FROM outbox_messages");
 		jdbc.update("DELETE FROM processed_messages");
+		jdbc.update("DELETE FROM reconciliation_findings");
 		jdbc.update("DELETE FROM chain_transactions");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");

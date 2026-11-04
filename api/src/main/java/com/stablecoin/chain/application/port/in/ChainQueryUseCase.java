@@ -57,6 +57,11 @@ public interface ChainQueryUseCase {
 	long getConfirmedNonce(String address);
 
 	/**
+	 * 블록의 트랜잭션을 블록 안의 순서대로 돌려준다.
+	 */
+	List<ChainTransaction> getBlockTransactions(long blockNumber);
+
+	/**
 	 * @throws TransactionNotFoundException 노드가 모르는 트랜잭션인 경우
 	 */
 	TransactionDetail getTransaction(String txHash);

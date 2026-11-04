@@ -35,7 +35,9 @@ import org.springframework.web.client.ResourceAccessException;
 
 import com.stablecoin.TestcontainersConfiguration;
 import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.payout.application.RangeNotAvailableException;
 import com.stablecoin.payout.application.port.in.DispatchPayoutUseCase;
+import com.stablecoin.payout.application.port.in.RunReconciliationUseCase;
 
 /**
  * 실제 Kafka로 소비자의 오류 분류를 확인한다: 일시 장애는 재시도, 깨진 메시지와 예상하지 못한 오류는 바로 DLT.
@@ -50,8 +52,13 @@ class ConsumerErrorHandlingTest {
 
 	private static final String DLT = "stablecoin.payout.DLT";
 
+	private static final String RECONCILIATION = "stablecoin.reconciliation";
+
 	@MockitoBean
 	private DispatchPayoutUseCase dispatchPayout;
+
+	@MockitoBean
+	private RunReconciliationUseCase reconciliation;
 
 	@Autowired
 	private KafkaTemplate<String, String> kafkaTemplate;
@@ -68,7 +75,7 @@ class ConsumerErrorHandlingTest {
 		ConsumerRecord<String, String> dead = consumeFromDlt(key);
 		assertThat(dead.value()).isEqualTo("{not json");
 		assertThat(header(dead, "kafka_dlt-exception-cause-fqcn"))
-			.isEqualTo(InvalidPayoutMessageException.class.getName());
+			.isEqualTo(InvalidKafkaMessageException.class.getName());
 		assertThat(header(dead, "failure-kind")).isEqualTo("PERMANENT");
 		verify(dispatchPayout, never()).dispatch(any(UUID.class), anyString());
 	}
@@ -146,6 +153,32 @@ class ConsumerErrorHandlingTest {
 		verify(dispatchPayout, never()).dispatch(org.mockito.ArgumentMatchers.eq(payoutId), anyString());
 	}
 
+	@Test
+	void reconciliationJobIsRetriedUntilTheChainReachesTheRange() throws Exception {
+		AtomicInteger calls = new AtomicInteger();
+		willAnswer(call -> {
+			if (calls.incrementAndGet() == 1) {
+				throw new RangeNotAvailableException(4, 5);
+			}
+			return 0;
+		}).given(reconciliation).run(4, 5);
+
+		kafkaTemplate.send(RECONCILIATION, "4-5", "{\"fromBlock\":4,\"toBlock\":5}").get();
+
+		verify(reconciliation, timeout(15_000).times(2)).run(4, 5);
+	}
+
+	@Test
+	void brokenReconciliationJobGoesToItsDeadLetterTopic() throws Exception {
+		String key = "broken-job-" + UUID.randomUUID();
+
+		kafkaTemplate.send(RECONCILIATION, key, "{not json").get();
+
+		ConsumerRecord<String, String> dead = findIn(RECONCILIATION + ".DLT", key, Duration.ofSeconds(20))
+			.orElseThrow(() -> new AssertionError("no record with key " + key));
+		assertThat(header(dead, "failure-kind")).isEqualTo("PERMANENT");
+	}
+
 	private void send(String key, String type, String value) throws Exception {
 		ProducerRecord<String, String> record = new ProducerRecord<>(TOPIC, key, value);
 		record.headers().add("event-type", type.getBytes(StandardCharsets.UTF_8));
@@ -166,6 +199,10 @@ class ConsumerErrorHandlingTest {
 	}
 
 	private Optional<ConsumerRecord<String, String>> findInDlt(String key, Duration timeout) {
+		return findIn(DLT, key, timeout);
+	}
+
+	private Optional<ConsumerRecord<String, String>> findIn(String topic, String key, Duration timeout) {
 		Properties props = new Properties();
 		props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
 		props.put(ConsumerConfig.GROUP_ID_CONFIG, "dlt-test-" + UUID.randomUUID());
@@ -173,7 +210,7 @@ class ConsumerErrorHandlingTest {
 		props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
 		props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
 		try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-			consumer.subscribe(List.of(DLT));
+			consumer.subscribe(List.of(topic));
 			long deadline = System.nanoTime() + timeout.toNanos();
 			while (System.nanoTime() < deadline) {
 				for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {

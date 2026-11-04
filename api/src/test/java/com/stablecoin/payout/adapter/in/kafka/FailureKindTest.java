@@ -10,6 +10,7 @@ import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.client.ResourceAccessException;
 
 import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.payout.application.RangeNotAvailableException;
 
 class FailureKindTest {
 
@@ -23,11 +24,12 @@ class FailureKindTest {
 			.isEqualTo(FailureKind.RETRIES_EXHAUSTED);
 		assertThat(FailureKind.of(new CannotCreateTransactionException("Could not open JPA EntityManager")))
 			.isEqualTo(FailureKind.RETRIES_EXHAUSTED);
+		assertThat(FailureKind.of(new RangeNotAvailableException(1, 2))).isEqualTo(FailureKind.RETRIES_EXHAUSTED);
 	}
 
 	@Test
 	void invalidMessageIsPermanent() {
-		assertThat(FailureKind.of(new InvalidPayoutMessageException("invalid", new IllegalArgumentException())))
+		assertThat(FailureKind.of(new InvalidKafkaMessageException("invalid", new IllegalArgumentException())))
 			.isEqualTo(FailureKind.PERMANENT);
 	}
 
@@ -43,7 +45,7 @@ class FailureKindTest {
 				new ChainUnavailableException(new ResourceAccessException("down")))))
 			.isEqualTo(FailureKind.RETRIES_EXHAUSTED);
 		assertThat(FailureKind.of(new ListenerExecutionFailedException("listener failed",
-				new InvalidPayoutMessageException("invalid", null))))
+				new InvalidKafkaMessageException("invalid", null))))
 			.isEqualTo(FailureKind.PERMANENT);
 	}
 

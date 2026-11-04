@@ -16,9 +16,11 @@ import com.stablecoin.outbox.domain.OutboxMessage;
 import com.stablecoin.payout.application.port.out.ChainTransactionStorePort;
 import com.stablecoin.payout.application.port.out.PayoutRepositoryPort;
 import com.stablecoin.payout.application.port.out.PayoutStatusHistoryPort;
+import com.stablecoin.payout.application.port.out.ReconciliationStorePort;
 import com.stablecoin.payout.domain.Payout;
 import com.stablecoin.payout.domain.PayoutChainTransaction;
 import com.stablecoin.payout.domain.PayoutStatus;
+import com.stablecoin.payout.domain.ReconciliationFinding;
 
 /**
  * 지급 상태 변경을 한곳에서 처리한다. 지급 상태, 상태 이력, 체인 트랜잭션, (필요하면) 가맹점 알림 outbox 메시지를
@@ -44,15 +46,19 @@ public class PayoutSettlementService {
 
 	private final ChainTransactionStorePort chainTransactions;
 
+	private final ReconciliationStorePort findings;
+
 	private final OutboxPort outbox;
 
 	private final TransactionTemplate transaction;
 
 	public PayoutSettlementService(PayoutRepositoryPort payouts, PayoutStatusHistoryPort history,
-			ChainTransactionStorePort chainTransactions, OutboxPort outbox, PlatformTransactionManager transactionManager) {
+			ChainTransactionStorePort chainTransactions, ReconciliationStorePort findings, OutboxPort outbox,
+			PlatformTransactionManager transactionManager) {
 		this.payouts = payouts;
 		this.history = history;
 		this.chainTransactions = chainTransactions;
+		this.findings = findings;
 		this.outbox = outbox;
 		this.transaction = new TransactionTemplate(transactionManager);
 	}
@@ -95,16 +101,30 @@ public class PayoutSettlementService {
 	 * 결과를 알 수 없다. 돈이 나갔을 수도 있으므로 실패로 처리하지 않고 사람이 확인하게 한다.
 	 */
 	public boolean requireReview(UUID payoutId, PayoutStatus from, String reason, String error) {
-		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason,
-				() -> chainTransactions.recordError(payoutId, error), null);
+		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason, () -> {
+			chainTransactions.recordError(payoutId, error);
+			recordReviewFinding(payoutId, reason, error);
+		}, null);
 	}
 
 	/**
 	 * 이 트랜잭션은 블록에 들어갈 수 없다. 지급을 어떻게 할지는 사람이 정한다.
 	 */
 	public boolean requireReviewNotOnChain(UUID payoutId, PayoutStatus from, String reason, String error) {
-		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason,
-				() -> chainTransactions.markFailed(payoutId, error), null);
+		return change(payoutId, from, PayoutStatus.REQUIRES_REVIEW, reason, () -> {
+			chainTransactions.markFailed(payoutId, error);
+			recordReviewFinding(payoutId, reason, error);
+		}, null);
+	}
+
+	/**
+	 * 사람이 확인할 지급을 reconciliation_findings 에서 함께 볼 수 있게 남긴다.
+	 */
+	private void recordReviewFinding(UUID payoutId, String reason, String error) {
+		String txHash = chainTransactions.findByPayoutId(payoutId)
+			.map(PayoutChainTransaction::transactionHash)
+			.orElse(null);
+		findings.recordOpen(ReconciliationFinding.review(reason, payoutId, txHash, error));
 	}
 
 	private boolean change(UUID payoutId, PayoutStatus from, PayoutStatus to, String reason, Runnable chainUpdate,

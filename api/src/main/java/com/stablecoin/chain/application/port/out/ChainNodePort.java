@@ -64,4 +64,7 @@ public interface ChainNodePort {
 
 	Instant getBlockTimestamp(long blockNumber);
 
+	/** 블록의 트랜잭션을 블록 안의 순서대로 돌려준다. */
+	List<ChainTransaction> getBlockTransactions(long blockNumber);
+
 }

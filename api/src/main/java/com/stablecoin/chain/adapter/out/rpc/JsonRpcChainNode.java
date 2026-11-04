@@ -112,6 +112,16 @@ public class JsonRpcChainNode implements ChainNodePort {
 		return Instant.ofEpochSecond(Eth.fromHexLong(block.timestamp()));
 	}
 
+	@Override
+	public List<ChainTransaction> getBlockTransactions(long blockNumber) {
+		RpcFullBlock block = call("eth_getBlockByNumber", List.of(Eth.toHex(BigInteger.valueOf(blockNumber)), true),
+				new ParameterizedTypeReference<JsonRpcResponse<RpcFullBlock>>() {});
+		if (block == null) {
+			throw new ChainException("eth_getBlockByNumber: block " + blockNumber + " not found");
+		}
+		return block.transactions().stream().map(RpcTransaction::toDomain).toList();
+	}
+
 	/**
 	 * JSON-RPC를 호출한다.
 	 * @throws ChainUnavailableException 노드에 연결할 수 없는 경우 (연결 거부, timeout 등)
@@ -163,6 +173,9 @@ public class JsonRpcChainNode implements ChainNodePort {
 					Eth.fromHexLong(blockNumber), input);
 		}
 
+	}
+
+	record RpcFullBlock(List<RpcTransaction> transactions) {
 	}
 
 	record RpcReceipt(String blockNumber, String status, String gasUsed, String effectiveGasPrice) {

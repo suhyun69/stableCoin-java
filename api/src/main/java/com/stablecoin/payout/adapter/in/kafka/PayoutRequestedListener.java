@@ -54,7 +54,7 @@ class PayoutRequestedListener {
 					() -> envelope.get("messageId").asString());
 		}
 		catch (RuntimeException ex) {
-			throw new InvalidPayoutMessageException("invalid " + PAYOUT_REQUESTED + " message at " + record.topic()
+			throw new InvalidKafkaMessageException("invalid " + PAYOUT_REQUESTED + " message at " + record.topic()
 					+ "-" + record.partition() + "@" + record.offset() + ": " + ex, ex);
 		}
 		log.info("Received {} {} for payout {}", type, messageId, payoutId);

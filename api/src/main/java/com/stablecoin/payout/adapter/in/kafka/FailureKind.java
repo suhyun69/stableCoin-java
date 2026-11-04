@@ -7,6 +7,7 @@ import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
 
 import com.stablecoin.chain.application.ChainUnavailableException;
+import com.stablecoin.payout.application.RangeNotAvailableException;
 
 /**
  * 소비자 처리 실패의 종류. DLT 메시지의 failure-kind 헤더 값이다.
@@ -27,14 +28,14 @@ enum FailureKind {
 	/** 재시도하는 일시 장애 */
 	static final List<Class<? extends Exception>> RETRYABLE = List.of(ChainUnavailableException.class,
 			TransientDataAccessException.class, DataAccessResourceFailureException.class,
-			CannotCreateTransactionException.class);
+			CannotCreateTransactionException.class, RangeNotAvailableException.class);
 
 	/**
 	 * 예외(감싼 예외 포함)로 실패 종류를 정한다.
 	 */
 	static FailureKind of(Throwable ex) {
 		for (Throwable cause = ex; cause != null; cause = (cause.getCause() == cause) ? null : cause.getCause()) {
-			if (cause instanceof InvalidPayoutMessageException) {
+			if (cause instanceof InvalidKafkaMessageException) {
 				return PERMANENT;
 			}
 			for (Class<? extends Exception> retryable : RETRYABLE) {

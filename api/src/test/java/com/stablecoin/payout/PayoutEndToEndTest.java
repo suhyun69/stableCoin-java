@@ -26,6 +26,7 @@ import com.stablecoin.chain.application.port.in.ChainQueryUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase;
 import com.stablecoin.payout.application.port.in.CreatePayoutUseCase.CreatePayoutCommand;
 import com.stablecoin.payout.application.port.in.DispatchPayoutUseCase;
+import com.stablecoin.payout.application.port.in.RunReconciliationUseCase;
 
 /**
  * 실제 Postgres, Kafka, anvil(컨테이너)로 지급 전체 흐름을 확인한다:
@@ -60,6 +61,9 @@ class PayoutEndToEndTest {
 	private DispatchPayoutUseCase dispatchPayout;
 
 	@Autowired
+	private RunReconciliationUseCase reconciliation;
+
+	@Autowired
 	private ChainQueryUseCase chainQuery;
 
 	@Autowired
@@ -69,6 +73,7 @@ class PayoutEndToEndTest {
 	void cleanTables() {
 		jdbc.update("DELETE FROM outbox_messages");
 		jdbc.update("DELETE FROM processed_messages");
+		jdbc.update("DELETE FROM reconciliation_findings");
 		jdbc.update("DELETE FROM chain_transactions");
 		jdbc.update("DELETE FROM payout_dispatches");
 		jdbc.update("DELETE FROM payout_status_history");
@@ -107,6 +112,11 @@ class PayoutEndToEndTest {
 		// 같은 지급을 다시 처리해도(이벤트 중복 등) 두 번 보내지 않는다
 		dispatchPayout.dispatch(payoutId);
 		assertThat(balance(RECIPIENT).subtract(before)).isEqualTo(AMOUNT);
+
+		// 실제 블록을 읽어 대사해도 장부와 어긋나는 것이 없다
+		long block = jdbc.queryForObject("SELECT included_block_number FROM chain_transactions WHERE payout_id = ?",
+				Long.class, payoutId);
+		assertThat(reconciliation.run(block, block)).isZero();
 	}
 
 	private BigInteger balance(String address) {

@@ -28,6 +28,7 @@ import com.stablecoin.chain.application.ChainUnavailableException;
 import com.stablecoin.chain.application.TransactionNotFoundException;
 import com.stablecoin.chain.application.UnknownSignerException;
 import com.stablecoin.payout.application.IdempotencyKeyConflictException;
+import com.stablecoin.payout.application.InvalidBlockRangeException;
 import com.stablecoin.payout.application.PayoutNotFoundException;
 
 /**
@@ -110,6 +111,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(IdempotencyKeyConflictException.class)
 	public ProblemDetail handleIdempotencyKeyConflict(IdempotencyKeyConflictException ex) {
 		return problem(HttpStatus.CONFLICT, ApiErrorCode.IDEMPOTENCY_KEY_CONFLICT, ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidBlockRangeException.class)
+	public ProblemDetail handleInvalidBlockRange(InvalidBlockRangeException ex) {
+		return problem(HttpStatus.BAD_REQUEST, ApiErrorCode.INVALID_BLOCK_RANGE, ex.getMessage());
 	}
 
 	@ExceptionHandler(PayoutNotFoundException.class)

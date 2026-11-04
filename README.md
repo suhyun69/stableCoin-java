@@ -104,6 +104,7 @@ com.stablecoin.chain
 | `GET` | `/api/chain/transactions/{txHash}` | 트랜잭션 상세 조회 |
 | `POST` | `/api/payouts` | 가맹점 지급 요청 (`Idempotency-Key` 헤더 필수) |
 | `GET` | `/api/payouts/{payoutId}` | 지급 상태와 체인 트랜잭션 조회 |
+| `POST` | `/internal/reconciliation/runs` | 블록 범위 장부 대사 요청 (내부용, 인증 없음) |
 | `GET` | `/actuator/health/chain` | 노드 연결 상태 (`UP`이면 200 + `chainId`, `DOWN`이면 503) |
 
 `/actuator/health`는 노드를 포함한 전체 상태를 보여줍니다.
@@ -116,6 +117,7 @@ com.stablecoin.chain
 | 400 | `UNKNOWN_SIGNER` | 앱이 `from` 지갑의 키를 갖고 있지 않음 |
 | 400 | `CHAIN_REJECTED` | 노드가 요청을 거부함 (잔액 부족 등). `detail`에 노드의 사유 |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` | 같은 `Idempotency-Key`로 다른 내용의 지급을 요청함 |
+| 400 | `INVALID_BLOCK_RANGE` | 대사 블록 범위가 잘못됐거나 너무 큼 |
 | 404 | `PAYOUT_NOT_FOUND` | 해당 지급이 없음 |
 | 404 | `TRANSACTION_NOT_FOUND` | 노드에 해당 트랜잭션이 없음 |
 | 503 | `CHAIN_UNAVAILABLE` | 노드에 연결할 수 없음 (연결 거부, timeout). `Retry-After` 헤더의 초만큼 기다린 뒤 다시 시도 |
@@ -182,7 +184,7 @@ curl http://localhost:8080/api/payouts/{id}
 - `payout_status_history`: 상태가 바뀔 때마다 한 줄 (처음: `NULL → REQUESTED`, `PAYOUT_CREATED`)
 - `outbox_messages`: 나중에 처리할 일. `PENDING` 상태로 쌓이며, payload에 받는 주소와 금액(wei)을 담음
 
-`V6__chain_ledger_tables.sql`은 TS 최종본의 `chain_transactions`, `chain_nonce_allocations`, `reconciliation_findings`와 `payouts.updated_at`을 만들고, `V7__move_dispatch_state_to_chain_transactions.sql`은 서명 이후의 전송 상태를 `chain_transactions`로 옮깁니다. `payout_dispatches`에는 소비자가 지급을 맡았다는 `STARTED` 표시만 남습니다. nonce 순서는 advisory lock이 맡으므로 `chain_nonce_allocations`는 쓰지 않습니다. `reconciliation_findings`도 아직 쓰지 않습니다.
+`V6__chain_ledger_tables.sql`은 TS 최종본의 `chain_transactions`, `chain_nonce_allocations`, `reconciliation_findings`와 `payouts.updated_at`을 만들고, `V7__move_dispatch_state_to_chain_transactions.sql`은 서명 이후의 전송 상태를 `chain_transactions`로 옮깁니다. `payout_dispatches`에는 소비자가 지급을 맡았다는 `STARTED` 표시만 남습니다. nonce 순서는 advisory lock이 맡으므로 `chain_nonce_allocations`는 쓰지 않습니다.
 
 ### outbox 발행기 (Kafka)
 
@@ -252,6 +254,32 @@ PAYOUT_REQUESTED (Kafka)
 - **정산은 조건부:** 지급이 기대한 상태일 때만 바꾸고, 이미 정산됐으면 그대로 둡니다. 가맹점 ID·금액·주소는 DB에서 읽습니다.
 - 상태가 바뀔 때마다 `payout_status_history`에 남습니다 (`REQUESTED → AWAITING_CONFIRMATION → SETTLED`).
 
+**장부 대사** (장부와 체인 비교)
+
+블록 범위를 주면, 그 범위에서 지급 지갑이 보내 성공한 ETH 전송을 읽어 장부와 비교하고 불일치를 `reconciliation_findings`에 남깁니다. ETH 전송에는 Transfer 이벤트가 없어 `eth_getBlockByNumber`로 블록의 트랜잭션을 직접 읽습니다. 해시, 보낸 지갑, 받는 지갑, 금액이 모두 같아야 같은 전송으로 봅니다.
+
+```bash
+curl -X POST http://localhost:8080/internal/reconciliation/runs \
+  -H 'Content-Type: application/json' -d '{"fromBlock":0,"toBlock":100}'
+```
+
+요청은 `stablecoin.reconciliation` 토픽으로 들어가고 `202`를 반환합니다. 소비자가 실행하며, 체인이 아직 끝 블록에 이르지 않았거나 노드에 연결할 수 없으면 다시 시도하고, 재시도 시간이 끝나거나 해석할 수 없는 작업은 `stablecoin.reconciliation.DLT`로 보냅니다. 이 API에는 인증이 없으므로 외부에 노출하면 안 됩니다.
+
+| `kind` | 뜻 | 처리 |
+| --- | --- | --- |
+| `STATUS_LAG` | 체인은 확정됐는데 장부가 늦음 | 자동으로 정산하고 `RESOLVED` |
+| `MISSING_CHAIN_EVENT` | `SETTLED`인데 체인에 전송이 없음 | `OPEN` |
+| `CHAIN_EVENT_WITHOUT_LEDGER` | 체인에 전송이 있는데 장부에 없음 | `OPEN` |
+| `DUPLICATE_CHAIN_EVENT` | 같은 전송을 두 번 읽음 | `OPEN` |
+| `STATUS_MISMATCH` | 장부 상태와 체인 사실이 어긋남 (`detail.reason`에 이유) | `OPEN` |
+| `TRANSFER_MISMATCH`, `NONCE_CONFLICT`, `BROADCAST_REJECTED`, `CONFIRMATION_TIMEOUT`, `NONCE_ALREADY_RECORDED` | 지급이 `REQUIRES_REVIEW`가 된 이유 (상태 변경과 같은 트랜잭션에서 기록) | `OPEN` |
+
+- 같은 범위를 다시 실행해도 안전합니다. 같은 문제는 `OPEN`인 동안 한 줄만 남습니다.
+- `REQUIRES_REVIEW` 지급은 체인에 전송이 있어도 자동으로 정산하지 않고 `STATUS_MISMATCH`(`REVIEW_WITH_CONFIRMED_TRANSFER`)로 남깁니다.
+- `log_index`에는 블록 안의 트랜잭션 위치를 저장합니다.
+- `/api/chain/transfers`로 지급 지갑에서 직접 보낸 전송은 장부에 없으므로 `CHAIN_EVENT_WITHOUT_LEDGER`로 잡힙니다.
+- 지금 `chain.payout-wallet`이 보낸 전송만 읽습니다. 지갑을 바꾸면 이전 지갑의 `SETTLED` 지급은 `MISSING_CHAIN_EVENT`로 잡힙니다.
+
 **소비자 오류 처리** (예외 종류로 분류)
 
 | 분류 | 예외 | 처리 | DLT `failure-kind` |
@@ -274,6 +302,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-s
 | `payout.confirmation.review-after` | `10m` | 영수증 없이 이 시간이 지나면 `REQUIRES_REVIEW` |
 | `payout.confirmation.required-confirmations` | `1` | 정산(또는 실패) 전에 쌓여야 하는 블록 수 (영수증 블록 포함, 1 이상) |
 | `payout.dispatcher.stuck-after` | `30s` | 멈춘 전송으로 보는 시간 |
+| `payout.reconciliation.max-blocks` | `1000` | 대사 한 번에 읽을 수 있는 최대 블록 수 |
 
 API 문서 (springdoc-openapi, 앱 실행 후):
 

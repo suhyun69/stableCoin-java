@@ -26,7 +26,7 @@ import org.springframework.util.backoff.ExponentialBackOff;
  * <li><b>영구 실패:</b> 해석할 수 없는 메시지. 다시 해도 같으므로 바로 DLT로 보낸다 (PERMANENT).</li>
  * <li><b>확인 필요:</b> 그 밖의 예상하지 못한 예외. 안전하게 판단할 수 없으므로 재시도하지 않고 바로 DLT로 보낸다 (REQUIRES_REVIEW).</li>
  * </ul>
- * DLT는 원래 토픽 이름 + ".DLT" (stablecoin.payout.DLT) 이고, 원래 파티션으로 보낸다. 메시지에는 failure-kind 와 예외 정보 헤더가 붙는다.
+ * DLT는 원래 토픽 이름 + ".DLT" (stablecoin.payout.DLT, stablecoin.reconciliation.DLT) 이고, 원래 파티션으로 보낸다. 메시지에는 failure-kind 와 예외 정보 헤더가 붙는다.
  * 지급 자체의 판단(보낼 때 거부, 영수증 없음 → REQUIRES_REVIEW)은 지급 상태로 처리하며 여기와는 별개다.
  */
 @Configuration
@@ -65,6 +65,16 @@ class KafkaConsumerConfig {
 	@Bean
 	NewTopic payoutEventsDeadLetterTopic(@Value("${outbox.kafka.topic-prefix}") String topicPrefix) {
 		return TopicBuilder.name(topicPrefix + "payout" + DLT_SUFFIX).partitions(3).replicas(1).build();
+	}
+
+	@Bean
+	NewTopic reconciliationJobsTopic(@Value("${outbox.kafka.topic-prefix}") String topicPrefix) {
+		return TopicBuilder.name(topicPrefix + "reconciliation").partitions(1).replicas(1).build();
+	}
+
+	@Bean
+	NewTopic reconciliationJobsDeadLetterTopic(@Value("${outbox.kafka.topic-prefix}") String topicPrefix) {
+		return TopicBuilder.name(topicPrefix + "reconciliation" + DLT_SUFFIX).partitions(1).replicas(1).build();
 	}
 
 	private static Throwable rootCause(Throwable ex) {

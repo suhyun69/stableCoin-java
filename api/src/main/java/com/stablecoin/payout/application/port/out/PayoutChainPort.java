@@ -1,6 +1,7 @@
 package com.stablecoin.payout.application.port.out;
 
 import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -41,5 +42,10 @@ public interface PayoutChainPort {
 	 * 이 지갑에서 블록에 들어간 트랜잭션 수. 이보다 작은 nonce는 모두 이미 쓰였다.
 	 */
 	long confirmedNonce(String address);
+
+	/**
+	 * 블록의 트랜잭션을 블록 안의 순서대로 돌려준다.
+	 */
+	List<ChainTransaction> blockTransactions(long blockNumber);
 
 }

@@ -1,6 +1,7 @@
 package com.stablecoin.payout.adapter.out.chain;
 
 import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -80,6 +81,11 @@ class ChainPayoutAdapter implements PayoutChainPort {
 	@Override
 	public long confirmedNonce(String address) {
 		return chainQuery.getConfirmedNonce(address);
+	}
+
+	@Override
+	public List<ChainTransaction> blockTransactions(long blockNumber) {
+		return chainQuery.getBlockTransactions(blockNumber);
 	}
 
 }

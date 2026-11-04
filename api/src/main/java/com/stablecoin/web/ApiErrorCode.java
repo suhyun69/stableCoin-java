@@ -30,6 +30,9 @@ public enum ApiErrorCode {
 	IDEMPOTENCY_KEY_CONFLICT,
 
 	/** 지급이 없음 */
-	PAYOUT_NOT_FOUND
+	PAYOUT_NOT_FOUND,
+
+	/** 대사 블록 범위가 잘못됨 */
+	INVALID_BLOCK_RANGE
 
 }
