@@ -182,6 +182,8 @@ curl http://localhost:8080/api/payouts/{id}
 - `payout_status_history`: 상태가 바뀔 때마다 한 줄 (처음: `NULL → REQUESTED`, `PAYOUT_CREATED`)
 - `outbox_messages`: 나중에 처리할 일. `PENDING` 상태로 쌓이며, payload에 받는 주소와 금액(wei)을 담음
 
+`V6__chain_ledger_tables.sql`은 TS 최종본의 `chain_transactions`, `chain_nonce_allocations`, `reconciliation_findings`와 `payouts.updated_at`을 만듭니다. 스키마만 있고 앱은 아직 이 테이블들에 쓰지 않습니다. 지금 지급 전송 기록은 `payout_dispatches`가 맡습니다. nonce 순서는 advisory lock이 맡으므로 `chain_nonce_allocations`는 앞으로도 쓰지 않습니다.
+
 ### outbox 발행기 (Kafka)
 
 앱 안의 발행기가 1초마다 `PENDING` outbox 메시지를 잡아 Kafka로 보내고, Kafka가 받았다고 확인(`acks=all`)하면 `PUBLISHED`로 바꿉니다.
