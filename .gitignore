@@ -8,6 +8,6 @@
 !.env.example
 **/.gradle/
 **/build/
-**/out/
+/api/out/
 **/data/
 *.log
