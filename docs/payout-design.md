@@ -9,3 +9,14 @@
 - 멱등 키는 제공 DDL대로 전체 지급에서 유일하다. 가맹점별 복합 키가 아니다.
 - 완료된 지급은 다시 전송 상태로 돌아가지 않는다. 대사 불일치 시 검토 상태로만 이동한다.
 - `REQUIRES_REVIEW`는 자동 정산하지 않는다. 별도 명시적 해결 정책이 필요하다.
+
+## 현재 API
+
+`POST /payouts`는 `Idempotency-Key` 헤더와 `merchantId`, `recipientAddress`, `amount`를 받는다.
+성공 시 202와 `Location`을 반환하며 같은 키·같은 내용은 기존 지급을 반환한다.
+같은 키의 다른 내용은 409, 입력 오류는 400이다.
+
+`GET /payouts/{id}`는 지급 상태와 `chain`을 반환한다. 거래 생성 전 `chain`은 null이다.
+nonce와 confirmations는 정수 정밀도 보존을 위해 JSON 문자열이다. 없는 지급은 404이다.
+
+지급 생성과 Outbox 저장까지 구현되었으며 Kafka Publisher/Consumer 및 실제 ETH 전송은 후속 단계다.

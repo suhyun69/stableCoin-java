@@ -20,3 +20,11 @@ cd api
 ## 로컬 인프라
 
 PostgreSQL, Anvil, Kafka 실행 절차는 [로컬 개발 안내](docs/local-development.md)를 참고한다.
+
+## 구현 상태
+
+- 완료: 로컬 인프라, PostgreSQL/Flyway, ETH 지급 도메인, 지급 생성·조회 API
+- 후속: Kafka 이벤트 연결, ETH 전송, 정산 확인, 장애 복구, 대사
+- 지급 생성은 현재 DB/Outbox 저장까지 수행하며 실제 자금 전송은 아직 수행하지 않는다.
+
+검증: `cd api && ./gradlew test postgresTest` (`postgresTest`는 로컬 PostgreSQL 필요).
