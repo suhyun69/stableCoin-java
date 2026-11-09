@@ -11,5 +11,6 @@ public record MessagingProperties(@DefaultValue("stablepay.payout-requested.v1")
         if (topic == null || topic.isBlank() || group == null || group.isBlank() || partitions < 1)
             throw new IllegalArgumentException("invalid messaging configuration");
     }
+    public String reconciliationTopic() {return topic+".reconciliation";}
     public String deadLetterTopic() { return topic + ".DLT"; }
 }

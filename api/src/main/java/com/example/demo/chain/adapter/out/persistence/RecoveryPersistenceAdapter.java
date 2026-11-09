@@ -15,7 +15,7 @@ public class RecoveryPersistenceAdapter implements RecoveryStorePort {
         var rows=jdbc.queryForList("SELECT p.status FROM payouts p JOIN chain_transactions ct ON ct.payout_id=p.id WHERE p.id=? AND ct.transaction_hash=? FOR UPDATE OF p,ct",transaction.payoutId(),transaction.hash());
         if(rows.isEmpty()) return;
         String current=(String)rows.getFirst().get("status");
-        if(!List.of("REQUESTED","AWAITING_CONFIRMATION").contains(current)) return;
+        if("REQUIRES_REVIEW".equals(current)) return;
         jdbc.update("UPDATE payouts SET status='REQUIRES_REVIEW',updated_at=now() WHERE id=?",transaction.payoutId());
         jdbc.update("UPDATE chain_transactions SET last_error=? WHERE payout_id=?",reason,transaction.payoutId());
         jdbc.update("INSERT INTO payout_status_history (id,payout_id,from_status,to_status,reason) VALUES (?,?,?,'REQUIRES_REVIEW',?)","hist_"+UUID.randomUUID(),transaction.payoutId(),current,reason);

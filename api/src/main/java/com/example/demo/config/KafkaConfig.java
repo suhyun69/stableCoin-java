@@ -13,7 +13,7 @@ public class KafkaConfig {
     @Bean public org.springframework.kafka.listener.DeadLetterPublishingRecoverer payoutRecoverer(
             org.springframework.kafka.core.KafkaTemplate<String,String> kafka, MessagingProperties properties) {
         var recoverer=new org.springframework.kafka.listener.DeadLetterPublishingRecoverer(kafka,
-            (record,error) -> new org.apache.kafka.common.TopicPartition(properties.deadLetterTopic(),record.partition()));
+            (record,error) -> new org.apache.kafka.common.TopicPartition(record.topic()+".DLT",record.partition()));
         recoverer.setFailIfSendResultIsError(true);
         recoverer.setWaitForSendResultTimeout(java.time.Duration.ofSeconds(20));
         return recoverer;
@@ -28,6 +28,12 @@ public class KafkaConfig {
             com.example.demo.common.exception.ConflictException.class,
             com.example.demo.common.exception.NotFoundException.class);
         return handler;
+    }
+    @Bean NewTopic reconciliationTopic(MessagingProperties properties) {
+        return TopicBuilder.name(properties.reconciliationTopic()).partitions(properties.partitions()).replicas(1).build();
+    }
+    @Bean NewTopic reconciliationDeadLetterTopic(MessagingProperties properties) {
+        return TopicBuilder.name(properties.reconciliationTopic()+".DLT").partitions(properties.partitions()).replicas(1).build();
     }
     @Bean NewTopic payoutRequestedTopic(MessagingProperties properties) {
         return TopicBuilder.name(properties.topic()).partitions(properties.partitions()).replicas(1).build();

@@ -11,7 +11,7 @@ public final class ReconciliationPolicy {
         for(var entry:ledger) {
             known.add(entry.hash());var event=transactions.get(entry.hash());
             if(event==null) {
-                if("SETTLED".equals(entry.payoutStatus())) findings.add(new ReconciliationFinding("MISSING_CHAIN_TRANSACTION",entry.payoutId(),entry.hash(),"SETTLED_WITHOUT_OBSERVED_TRANSACTION"));
+                if("SETTLED".equals(entry.payoutStatus()) || ("REQUIRES_REVIEW".equals(entry.payoutStatus()) && entry.includedBlock()!=null)) findings.add(new ReconciliationFinding("MISSING_CHAIN_TRANSACTION",entry.payoutId(),entry.hash(),"SETTLED_WITHOUT_OBSERVED_TRANSACTION"));
                 continue;
             }
             String kind=null,reason=null;
