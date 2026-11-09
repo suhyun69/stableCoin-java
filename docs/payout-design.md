@@ -19,7 +19,7 @@
 `GET /payouts/{id}`는 지급 상태와 `chain`을 반환한다. 거래 생성 전 `chain`은 null이다.
 nonce와 confirmations는 정수 정밀도 보존을 위해 JSON 문자열이다. 없는 지급은 404이다.
 
-지급 생성과 Outbox 저장까지 구현되었으며 Kafka Publisher/Consumer 및 실제 ETH 전송은 후속 단계다.
+Kafka Publisher/Consumer, 실제 ETH 전송, 정산 확인, 장애 복구와 블록 구간 대사까지 구현되어 있다.
 
 ## Kafka 실패 처리
 
@@ -31,3 +31,26 @@ DLT 발행 확인이 실패하면 원래 메시지 처리를 완료하지 않는
 DLT 원인을 수정한 후 해당 지급 Outbox 행만 `status='PENDING',available_at=now(),locked_at=NULL,locked_by=NULL`
 로 되돌리면 Publisher가 같은 eventId를 재발행한다. processed_messages나 nonce를 삭제하지 않는다.
 이미 전송된 지급의 재처리는 기존 거래를 유지하며, 검토 상태는 수동 조사 전 자동 해제하지 않는다.
+
+
+## ETH 대사와 정산
+
+관리 발신 지갑의 직접 ETH 전송을 거래 해시로 비교한다. ERC-20 로그를 사용하지 않으며
+`log_index`는 NULL이다. 동일 발신자/nonce의 관측과 저장된 서명 원문으로 중복 지급을 방지한다.
+영수증 성공, 거래의 from/to/value/nonce, 포함 블록과 canonical block hash를 대조한다.
+확인 수는 `현재 블록 - 포함 블록 + 1`이며 기본 임계값은 2다.
+
+상태 지연은 정산 상태로 반영하고 resolved finding을 남긴다. 거래 누락·내용 불일치·최종 상태 모순은
+open finding과 REQUIRES_REVIEW로 분리한다. 대사 DB 반영은 전역 advisory lock으로 직렬화한다.
+따라서 NULL log_index가 기존 부분 고유 인덱스에 포함되지 않아도 동일 ETH finding을 중복 생성하지 않는다.
+범위 내 재검증에서 조건이 해소된 finding은 resolved_at과 함께 닫되 지급의 검토 상태는 자동 해제하지 않는다.
+
+## 예제와 달라진 점
+
+- TypeScript/Fastify/viem 대신 Java/Spring Boot/Web3j를 사용한다.
+- USDC 6자리·Transfer 로그 대신 ETH 18자리·직접 거래 내용을 검증한다.
+- BullMQ/Redis 대신 Kafka 지급·대사 토픽과 DLT를 사용하며 PostgreSQL Outbox를 유지한다.
+- 제공 스키마에 없는 payout_dispatches를 만들지 않고 processed_messages와 chain_transactions를 사용한다.
+- nonce 할당과 거래 생성을 같은 DB 트랜잭션으로 묶고 불명확한 전송의 원문 재전송을 연결했다.
+- fingerprint는 정규화한 주소·wei를 사용한다. 응답의 nonce·confirmations는 문자열이다.
+- 입금 원장 스키마가 제공되지 않아 별도 입금 수집과 컨트랙트 내부 전송 추적은 범위에서 제외한다.

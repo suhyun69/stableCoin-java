@@ -2,6 +2,10 @@ server:
   port: 8080
 
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 3
   application:
     name: stablepay-api
 

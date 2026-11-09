@@ -14,5 +14,6 @@ class KafkaRecoveryTest {
         var recoverer=new KafkaConfig().payoutRecoverer(kafka,new MessagingProperties("test","group",1));
         recoverer.setVerifyPartition(false);
         assertThrows(RuntimeException.class,() -> recoverer.accept(new ConsumerRecord<>("test",0,0,"key","value"),new IllegalStateException("original")));
+        verify(kafka).send(any(ProducerRecord.class));
     }
 }
