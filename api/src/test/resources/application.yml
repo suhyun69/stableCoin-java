@@ -20,3 +20,11 @@ spring:
 logging:
   level:
     org.hibernate.SQL: INFO
+
+stablepay:
+  messaging:
+    enabled: false
+  chain:
+    enabled: false
+  workers:
+    enabled: false

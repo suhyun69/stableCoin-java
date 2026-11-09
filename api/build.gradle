@@ -18,6 +18,7 @@ repositories {
 }
 
 dependencies {
+    implementation 'org.springframework.kafka:spring-kafka'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -39,7 +40,7 @@ tasks.named('test') {
 }
 
 tasks.named('test') {
-    useJUnitPlatform { excludeTags 'postgres' }
+    useJUnitPlatform { excludeTags 'postgres', 'kafka', 'chain', 'e2e' }
 }
 
 tasks.register('postgresTest', Test) {
@@ -49,4 +50,13 @@ tasks.register('postgresTest', Test) {
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform { includeTags 'postgres' }
     shouldRunAfter tasks.named('test')
+}
+
+ tasks.register('integrationTest', Test) {
+    description = 'Run Kafka, Anvil and end-to-end integration tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'kafka', 'chain', 'e2e' }
+    shouldRunAfter tasks.named('postgresTest')
 }
