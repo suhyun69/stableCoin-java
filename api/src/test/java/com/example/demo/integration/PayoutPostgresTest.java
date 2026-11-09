@@ -67,6 +67,16 @@ class PayoutPostgresTest {
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payouts WHERE idempotency_key=?", Integer.class, key));
         } finally { jdbc.execute("ALTER TABLE outbox_messages DROP CONSTRAINT test_fail"); }
     }
+    @Test void readsPayoutBeforeAndAfterTransactionCreation() throws Exception {
+        var payout = create.create(request(UUID.randomUUID().toString(), "0.1"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/payouts/" + payout.id()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REQUESTED")).andExpect(jsonPath("$.chain").isEmpty());
+        jdbc.update("INSERT INTO chain_transactions (id,payout_id,sender_address,recipient_address,amount_atomic,nonce,status) VALUES (?,?,?,?,?,0,'CREATED')",
+            "ctx_" + UUID.randomUUID(), payout.id(), ADDRESS, ADDRESS, new java.math.BigDecimal("100000000000000000"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/payouts/" + payout.id()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.chain.status").value("CREATED")).andExpect(jsonPath("$.chain.nonce").value("0"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/payouts/missing")).andExpect(status().isNotFound());
+    }
     @Test void httpContract() throws Exception {
         String key = UUID.randomUUID().toString();
         String body = "{\"merchantId\":\"merchant\",\"recipientAddress\":\"" + ADDRESS + "\",\"amount\":\"0.1\"}";
