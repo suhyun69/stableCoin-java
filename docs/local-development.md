@@ -24,3 +24,26 @@ docker compose up -d --wait
 
 `docker compose down`은 볼륨을 유지한다. 모든 개발 데이터를 초기화할 때만
 `docker compose down -v`를 사용한다. DB만 남기고 체인만 초기화하지 않는다.
+
+## 백엔드 DB
+
+```sh
+cd api
+./gradlew bootRun
+```
+
+기본 연결은 `jdbc:postgresql://localhost:5433/stablepay`이며 사용자/비밀번호는
+`stablepay`이다. 변경 시 `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`를
+프로세스 환경 변수로 지정한다. Flyway가 스키마를 생성하고 Hibernate는 검증만 수행한다.
+V1은 제공된 지급 스키마이며 V2는 포팅 기간 기존 Todo API 호환용이다.
+Todo 제거 시 별도 후속 마이그레이션에서 정리한다.
+기존 테스트는 격리된 H2를 사용하고 PostgreSQL 마이그레이션은 별도로 실DB에서 검증한다.
+
+```sh
+cd api
+./gradlew test postgresTest
+```
+
+`postgresTest`는 UUID로 구분된 테스트 스키마를 생성하고 종료 시 삭제한다.
+기본 개발 스키마는 건드리지 않는다. 별도 DB는 `TEST_DATABASE_URL`,
+`TEST_DATABASE_USERNAME`, `TEST_DATABASE_PASSWORD`로 지정한다.
