@@ -19,17 +19,26 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>도메인 예외가 공통 타입을 통해 HTTP로 번역되는지, 그리고 프레임워크가 던지는
  * 요청 오류들이 일관된 본문으로 돌아오는지를 본다.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
 class GlobalExceptionHandlerTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    private final MockMvc mockMvc=org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .standaloneSetup(new ErrorTestController()).setControllerAdvice(new GlobalExceptionHandler()).build();
+
+    @org.springframework.web.bind.annotation.RestController
+    static class ErrorTestController {
+        @org.springframework.web.bind.annotation.GetMapping("/errors/missing/{id}")
+        public void missing(@org.springframework.web.bind.annotation.PathVariable long id) {
+            throw new com.example.demo.common.exception.NotFoundException("resource not found");
+        }
+        @org.springframework.web.bind.annotation.PostMapping("/errors/input")
+        public void input(@jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody Input input) {}
+        record Input(@jakarta.validation.constraints.NotBlank String title) {}
+    }
 
     @Test
     @DisplayName("도메인의 NotFound 계열 예외는 404로 번역된다")
     void notFoundIsTranslated() throws Exception {
-        mockMvc.perform(get("/api/todos/987654321"))
+        mockMvc.perform(get("/errors/missing/987654321"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.error").value("Not Found"))
@@ -40,7 +49,7 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("깨진 JSON 본문은 500이 아니라 400으로 돌아온다")
     void malformedJsonIsBadRequest() throws Exception {
-        mockMvc.perform(post("/api/todos")
+        mockMvc.perform(post("/errors/input")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\": "))
                 .andExpect(status().isBadRequest())
@@ -52,7 +61,7 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("경로 변수 타입이 맞지 않으면 400으로 돌아온다")
     void typeMismatchIsBadRequest() throws Exception {
-        mockMvc.perform(get("/api/todos/not-a-number"))
+        mockMvc.perform(get("/errors/missing/not-a-number"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value("'id' 값이 올바르지 않습니다."));
@@ -61,7 +70,7 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("검증 실패 응답에는 fieldErrors가 포함된다")
     void validationFailureCarriesFieldErrors() throws Exception {
-        mockMvc.perform(post("/api/todos")
+        mockMvc.perform(post("/errors/input")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"\"}"))
                 .andExpect(status().isBadRequest())
@@ -72,7 +81,7 @@ class GlobalExceptionHandlerTest {
     @Test
     @DisplayName("정상 응답에는 fieldErrors가 직렬화되지 않는다")
     void errorResponseOmitsNullFields() throws Exception {
-        mockMvc.perform(get("/api/todos/987654321"))
+        mockMvc.perform(get("/errors/missing/987654321"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.fieldErrors").doesNotExist());
     }

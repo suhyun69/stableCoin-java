@@ -22,9 +22,9 @@ class DemoApplicationTests {
     }
 
     @Test
-    void helloReturnsGreeting() throws Exception {
-        mockMvc.perform(get("/hello").param("name", "spring"))
+    void healthReturnsOk() throws Exception {
+        mockMvc.perform(get("/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("Hello, spring!"));
+                .andExpect(jsonPath("$.status").value("ok"));
     }
 }

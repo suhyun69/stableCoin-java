@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: demo
+    name: stablepay-api
 
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/stablepay}
@@ -32,10 +32,6 @@ spring:
       ack-mode: record
   flyway:
     enabled: true
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    open-in-view: false
 
 # http://localhost:8080/swagger-ui.html 에서 API를 보고 직접 호출해 볼 수 있다.
 # 스펙 원본(JSON)은 http://localhost:8080/v3/api-docs
@@ -52,7 +48,7 @@ logging:
   level:
     root: INFO
     com.example.demo: DEBUG
-    org.hibernate.SQL: DEBUG
+
 
 stablepay:
   workers:
