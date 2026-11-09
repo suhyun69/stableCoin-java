@@ -34,6 +34,9 @@ public class Web3jEthAdapter implements EthChainPort {
     public long pendingNonce() {
         chainId(); return request(() -> rpc.ethGetTransactionCount(sender(),DefaultBlockParameterName.PENDING).send()).getTransactionCount().longValueExact();
     }
+    public long confirmedNonce() {
+        chainId(); return request(() -> rpc.ethGetTransactionCount(sender(),DefaultBlockParameterName.LATEST).send()).getTransactionCount().longValueExact();
+    }
     public SignedEthTransaction sign(ChainTransaction transaction) {
         chainId();
         if(!sender().equalsIgnoreCase(transaction.sender())) throw new IllegalArgumentException("signer address mismatch");

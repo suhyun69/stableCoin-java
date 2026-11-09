@@ -5,6 +5,7 @@ public interface EthChainPort {
     long chainId();
     String sender();
     long pendingNonce();
+    long confirmedNonce();
     SignedEthTransaction sign(ChainTransaction transaction);
     void broadcast(SignedEthTransaction transaction);
     Optional<EthTransfer> transaction(String hash);
