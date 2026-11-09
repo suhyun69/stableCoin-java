@@ -9,6 +9,27 @@ spring:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/stablepay}
     username: ${DATABASE_USERNAME:stablepay}
     password: ${DATABASE_PASSWORD:stablepay}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 10
+        max.poll.interval.ms: 300000
+    listener:
+      ack-mode: record
   flyway:
     enabled: true
   jpa:
@@ -32,3 +53,10 @@ logging:
     root: INFO
     com.example.demo: DEBUG
     org.hibernate.SQL: DEBUG
+
+stablepay:
+  messaging:
+    enabled: ${MESSAGING_ENABLED:true}
+    topic: ${PAYOUT_TOPIC:stablepay.payout-requested.v1}
+    group: ${PAYOUT_GROUP:stablepay-payout-sender}
+    partitions: 1
