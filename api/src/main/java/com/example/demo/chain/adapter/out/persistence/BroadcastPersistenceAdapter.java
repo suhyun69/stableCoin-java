@@ -18,8 +18,8 @@ public class BroadcastPersistenceAdapter implements BroadcastStorePort {
         var rows=jdbc.queryForList("SELECT p.status payout_status,ct.status chain_status FROM payouts p JOIN chain_transactions ct ON ct.payout_id=p.id WHERE p.id=? FOR UPDATE OF p,ct",payoutId);
         if(rows.isEmpty()) throw new IllegalStateException("prepared transaction missing");
         var row=rows.getFirst(); String chainStatus=(String)row.get("chain_status");
-        if("SIGNED".equals(chainStatus) || "BROADCAST_UNKNOWN".equals(chainStatus)) {
-            jdbc.update("UPDATE chain_transactions SET status=?,broadcast_at=COALESCE(broadcast_at,now()),last_error=? WHERE payout_id=?",
+        if("SIGNED".equals(chainStatus) || "BROADCAST_UNKNOWN".equals(chainStatus) || "PENDING".equals(chainStatus)) {
+            jdbc.update("UPDATE chain_transactions SET status=?,broadcast_at=now(),last_error=? WHERE payout_id=?",
                 accepted?"PENDING":"BROADCAST_UNKNOWN",error,payoutId);
         }
         if("REQUESTED".equals(row.get("payout_status"))) {
