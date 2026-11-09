@@ -55,6 +55,14 @@ logging:
     org.hibernate.SQL: DEBUG
 
 stablepay:
+  chain:
+    enabled: ${CHAIN_ENABLED:true}
+    rpc-url: ${ANVIL_RPC_URL:http://localhost:8545}
+    id: ${CHAIN_ID:31337}
+    sender-address: ${SENDER_ADDRESS:0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266}
+    # Public Anvil development key, never a production wallet.
+    private-key: ${ANVIL_PRIVATE_KEY:0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+    confirmations: ${REQUIRED_CONFIRMATIONS:2}
   messaging:
     enabled: ${MESSAGING_ENABLED:true}
     topic: ${PAYOUT_TOPIC:stablepay.payout-requested.v1}
