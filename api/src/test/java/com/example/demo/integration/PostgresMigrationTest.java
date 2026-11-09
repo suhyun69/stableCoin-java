@@ -22,14 +22,14 @@ class PostgresMigrationTest {
                 .defaultSchema(schema).load();
         try (var connection = DriverManager.getConnection(url, user, password)) {
             try {
-                assertEquals(2, flyway.migrate().migrationsExecuted);
+                assertEquals(3, flyway.migrate().migrationsExecuted);
                 assertEquals(0, flyway.migrate().migrationsExecuted);
                 flyway.validate();
                 connection.setSchema(schema);
                 try (var statement = connection.createStatement()) {
                     try (var result = statement.executeQuery("SELECT count(*) FROM information_schema.tables WHERE table_schema = '" + schema + "'")) {
                         assertTrue(result.next());
-                        assertEquals(9, result.getInt(1)); // seven payout tables + Todo + Flyway history
+                        assertEquals(8, result.getInt(1)); // seven payout tables + Flyway history
                     }
                     assertThrows(SQLException.class, () -> statement.executeUpdate("INSERT INTO chain_nonce_allocations VALUES ('sender', -1)"));
                     statement.executeUpdate("INSERT INTO chain_nonce_allocations VALUES ('sender', 0)");
