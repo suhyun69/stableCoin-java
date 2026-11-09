@@ -16,3 +16,7 @@ cd api
 
 포팅은 작업별 `codex/` 브랜치에서 검증한 뒤 기본 브랜치에 머지한다.
 기준선은 기존 Todo 애플리케이션이며 지급 기능은 순차적으로 추가한다.
+
+## 로컬 인프라
+
+PostgreSQL, Anvil, Kafka 실행 절차는 [로컬 개발 안내](docs/local-development.md)를 참고한다.
