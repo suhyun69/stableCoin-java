@@ -34,7 +34,8 @@ class ArchitectureTest {
             ROOT + ".controller..",
             ROOT + ".usecase..",
             ROOT + ".common..",
-            ROOT + ".config.."
+            ROOT + ".config..",
+            ROOT + ".runtime.."
     };
 
     // ------------------------------------------------------------------
@@ -43,6 +44,7 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule 계층_의존_방향 = layeredArchitecture().consideringOnlyDependenciesInLayers()
+            .layer("Runtime").definedBy(ROOT + ".runtime..")
             .layer("Controller").definedBy(ROOT + ".controller..")
             .layer("UseCase").definedBy(ROOT + ".usecase..")
             .layer("DomainService").definedBy(ROOT + "..application..")
@@ -50,7 +52,7 @@ class ArchitectureTest {
             .layer("Persistence").definedBy(ROOT + "..adapter..")
 
             .whereLayer("Controller").mayNotBeAccessedByAnyLayer()
-            .whereLayer("UseCase").mayOnlyBeAccessedByLayers("Controller")
+            .whereLayer("UseCase").mayOnlyBeAccessedByLayers("Controller", "Runtime")
             .whereLayer("DomainService").mayOnlyBeAccessedByLayers("UseCase", "Persistence")
             .whereLayer("Persistence").mayNotBeAccessedByAnyLayer();
 
