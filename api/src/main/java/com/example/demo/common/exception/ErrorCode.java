@@ -19,6 +19,8 @@ public enum ErrorCode {
     CONFLICT("Conflict"),
 
     /** 분류되지 않은 내부 오류. */
+    UNAVAILABLE("Service Unavailable"),
+
     INTERNAL_ERROR("Internal Server Error");
 
     private final String title;
