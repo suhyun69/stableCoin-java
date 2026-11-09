@@ -20,3 +20,14 @@
 nonce와 confirmations는 정수 정밀도 보존을 위해 JSON 문자열이다. 없는 지급은 404이다.
 
 지급 생성과 Outbox 저장까지 구현되었으며 Kafka Publisher/Consumer 및 실제 ETH 전송은 후속 단계다.
+
+## Kafka 실패 처리
+
+소비는 최초 1회 + 지수 지연 재시도 4회 후 같은 파티션의 `<topic>.DLT`에 원본을 보관한다.
+잘못된 이벤트·지원하지 않는 버전·존재하지 않는 지급·업무 충돌은 즉시 DLT로 보낸다.
+DLT 발행 확인이 실패하면 원래 메시지 처리를 완료하지 않는다. DLT 이동 자체로 지급을 FAILED로 바꾸지 않는다.
+전송 결과가 불명확한 경우는 메시지 재시도 대신 DB의 BROADCAST_UNKNOWN 복구 대상이다.
+
+DLT 원인을 수정한 후 해당 지급 Outbox 행만 `status='PENDING',available_at=now(),locked_at=NULL,locked_by=NULL`
+로 되돌리면 Publisher가 같은 eventId를 재발행한다. processed_messages나 nonce를 삭제하지 않는다.
+이미 전송된 지급의 재처리는 기존 거래를 유지하며, 검토 상태는 수동 조사 전 자동 해제하지 않는다.
