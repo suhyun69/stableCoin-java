@@ -25,7 +25,7 @@ public class ConfirmationPersistenceAdapter implements ConfirmationStorePort {
         if("REQUIRES_REVIEW".equals(decision.kind())) {
             transition(expected.payoutId(),current,"REQUIRES_REVIEW",decision.reason());return;
         }
-        if("SETTLED".equals(current) || "FAILED".equals(current)) return;
+        if("FAILED".equals(current) || ("SETTLED".equals(current) && !"CONFIRMED".equals(decision.kind()))) return;
         String chainStatus=switch(decision.kind()) {case "CONFIRMED" -> "CONFIRMED";case "FAILED" -> "MINED_REVERTED";default -> "MINED_SUCCESS";};
         jdbc.update("UPDATE chain_transactions SET status=?,included_block_number=?,confirmations=?,mined_at=COALESCE(mined_at,now()),confirmed_at=CASE WHEN ?='CONFIRMED' THEN COALESCE(confirmed_at,now()) ELSE confirmed_at END,last_error=NULL WHERE payout_id=?",
             chainStatus,receipt.blockNumber(),decision.confirmations(),chainStatus,expected.payoutId());
