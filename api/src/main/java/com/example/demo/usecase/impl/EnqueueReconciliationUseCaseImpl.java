@@ -15,7 +15,8 @@ public class EnqueueReconciliationUseCaseImpl implements EnqueueReconciliationUs
     public EnqueueReconciliationUseCaseImpl(ReconciliationJobsPort jobs) {this.jobs=jobs;}
     public ReconciliationAppResponse enqueue(String from,String to) {
         var range=BlockRange.parse(from,to);String id="run_"+UUID.randomUUID();
-        jobs.enqueue(new ReconciliationRequestedEvent(id,1,Long.toString(range.from()),Long.toString(range.to())));
+        try {jobs.enqueue(new ReconciliationRequestedEvent(id,1,Long.toString(range.from()),Long.toString(range.to())));}
+        catch(RuntimeException e) {throw new com.example.demo.common.exception.ServiceUnavailableException("reconciliation queue is temporarily unavailable",e);}
         return new ReconciliationAppResponse(id,true,Long.toString(range.from()),Long.toString(range.to()));
     }
 }
