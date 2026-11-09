@@ -55,6 +55,8 @@ logging:
     org.hibernate.SQL: DEBUG
 
 stablepay:
+  workers:
+    enabled: ${WORKERS_ENABLED:true}
   chain:
     enabled: ${CHAIN_ENABLED:true}
     rpc-url: ${ANVIL_RPC_URL:http://localhost:8545}
