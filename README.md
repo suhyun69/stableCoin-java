@@ -1,0 +1,18 @@
+# StablePay Java
+
+Java 21 / Spring Boot 기반 로컬 ETH 지급 프로젝트.
+
+- `api/`: 백엔드와 테스트
+- `Source Code/`: TypeScript 참고 예제. Git 추적 대상에서 제외한다.
+- Git 저장소는 루트 하나만 사용한다.
+
+## 개발
+
+```sh
+cd api
+./gradlew test
+./gradlew bootRun
+```
+
+포팅은 작업별 `codex/` 브랜치에서 검증한 뒤 기본 브랜치에 머지한다.
+기준선은 기존 Todo 애플리케이션이며 지급 기능은 순차적으로 추가한다.

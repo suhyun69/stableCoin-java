@@ -1,0 +1,45 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: demo
+
+  # 파일 기반 H2. 재시작해도 ./data/demo.mv.db 에 데이터가 남는다.
+  # 매 실행마다 초기화하려면 url 을 jdbc:h2:mem:demo 로 바꾼다.
+  datasource:
+    url: jdbc:h2:file:./data/demo;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  # http://localhost:8080/h2-console 에서 위 url 로 접속해 데이터를 직접 확인할 수 있다.
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# http://localhost:8080/swagger-ui.html 에서 API를 보고 직접 호출해 볼 수 있다.
+# 스펙 원본(JSON)은 http://localhost:8080/v3/api-docs
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    display-request-duration: true
+
+logging:
+  level:
+    root: INFO
+    com.example.demo: DEBUG
+    org.hibernate.SQL: DEBUG
