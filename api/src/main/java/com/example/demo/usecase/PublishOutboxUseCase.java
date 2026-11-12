@@ -1,2 +1,5 @@
 package com.example.demo.usecase;
-public interface PublishOutboxUseCase { int publish(); }
+
+public interface PublishOutboxUseCase {
+  int publish();
+}

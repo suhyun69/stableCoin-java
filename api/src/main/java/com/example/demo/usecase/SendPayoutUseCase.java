@@ -1,2 +1,5 @@
 package com.example.demo.usecase;
-public interface SendPayoutUseCase { void send(String eventId, String payoutId); }
+
+public interface SendPayoutUseCase {
+  void send(String eventId, String payoutId);
+}

@@ -33,6 +33,15 @@ API → 지급·이력·Outbox 원자적 저장 → Kafka → 지급 Consumer �
 
 ## 검증
 
+Java 소스와 테스트는 Google Java Style을 사용한다. Spotless와 google-java-format의 버전을
+고정하여 개발 환경마다 동일하게 포맷한다.
+
+```sh
+cd api
+./gradlew spotlessApply  # 줄바꿈·들여쓰기·띄어쓰기·import 자동 정리
+./gradlew spotlessCheck # 스타일 검사 (check 태스크에도 포함)
+```
+
 ```sh
 cd api
 ./gradlew test
