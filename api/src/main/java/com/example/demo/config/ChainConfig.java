@@ -1,5 +1,6 @@
 package com.example.demo.config;
 
+import com.example.demo.chain.adapter.out.rpc.AnvilWalletRegistry;
 import com.example.demo.chain.adapter.out.rpc.Web3jEthAdapter;
 import com.example.demo.chain.application.port.out.EthChainPort;
 import java.time.Duration;
@@ -26,13 +27,9 @@ public class ChainConfig {
 
   @Bean
   EthChainPort ethChain(
-      Web3j rpc,
-      @Value("${stablepay.chain.private-key}") String key,
-      @Value("${stablepay.chain.id}") long chainId,
-      @Value("${stablepay.chain.sender-address}") String sender) {
-    var chain = new Web3jEthAdapter(rpc, key, chainId);
-    if (!chain.sender().equalsIgnoreCase(sender))
-      throw new IllegalArgumentException("configured sender does not match private key");
+      Web3j rpc, AnvilWalletRegistry wallets, @Value("${stablepay.chain.id}") long chainId) {
+    var chain = new Web3jEthAdapter(rpc, wallets, chainId);
+    chain.validateAnvilAccounts();
     return chain;
   }
 }

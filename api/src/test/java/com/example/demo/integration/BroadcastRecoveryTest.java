@@ -20,7 +20,7 @@ class BroadcastRecoveryTest {
       var transactions = new ChainTransactionPersistenceAdapter(db.jdbc);
       var broadcasts = new BroadcastPersistenceAdapter(db.jdbc);
       var chain = mock(EthChainPort.class);
-      when(chain.sender()).thenReturn("sender");
+      when(chain.senders()).thenReturn(Set.of("sender"));
       var recover =
           new RecoverBroadcastsUseCaseImpl(
               chain,
@@ -29,6 +29,7 @@ class BroadcastRecoveryTest {
               new RecoveryPersistenceAdapter(db.jdbc),
               new DataSourceTransactionManager(db.dataSource));
       String id = db.payout();
+      db.jdbc.update("UPDATE payouts SET sender_address='sender' WHERE id=?", id);
       db.tx.execute(s -> transactions.prepare(id, "sender", 0));
       db.tx.execute(
           s -> transactions.signed(id, new SignedEthTransaction("saved-raw", "saved-hash")));
@@ -55,6 +56,7 @@ class BroadcastRecoveryTest {
       assertEquals(
           1L, db.jdbc.queryForObject("SELECT next_nonce FROM chain_nonce_allocations", Long.class));
       String conflict = db.payout();
+      db.jdbc.update("UPDATE payouts SET sender_address='sender' WHERE id=?", conflict);
       db.tx.execute(s -> transactions.prepare(conflict, "sender", 0));
       db.tx.execute(
           s ->
@@ -63,7 +65,7 @@ class BroadcastRecoveryTest {
       db.jdbc.update(
           "UPDATE chain_transactions SET signed_at=now()-interval '11 seconds' WHERE payout_id=?",
           conflict);
-      when(chain.confirmedNonce()).thenReturn(5L);
+      when(chain.confirmedNonce("sender")).thenReturn(5L);
       recover.recover();
       recover.recover();
       assertEquals(

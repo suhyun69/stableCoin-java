@@ -22,7 +22,7 @@ class ReconciliationRunnerTest {
         var pool = Executors.newFixedThreadPool(2)) {
       var transactions = new ChainTransactionPersistenceAdapter(db.jdbc);
       var chain = mock(EthChainPort.class);
-      when(chain.sender()).thenReturn("sender");
+      when(chain.senders()).thenReturn(Set.of("sender"));
       when(chain.head()).thenReturn(11L);
       when(chain.blockHash(10)).thenReturn("block");
       var run =
@@ -35,6 +35,7 @@ class ReconciliationRunnerTest {
               new DataSourceTransactionManager(db.dataSource),
               2);
       String id = db.payout();
+      db.jdbc.update("UPDATE payouts SET sender_address='sender' WHERE id=?", id);
       var saved = db.tx.execute(s -> transactions.prepare(id, "sender", 0));
       db.tx.execute(s -> transactions.signed(id, new SignedEthTransaction("raw", "hash")));
       var observed =
@@ -64,6 +65,7 @@ class ReconciliationRunnerTest {
               "SELECT count(*) FROM reconciliation_findings WHERE status='RESOLVED' AND kind='STATUS_LAG'",
               Integer.class));
       String repaired = db.payout();
+      db.jdbc.update("UPDATE payouts SET sender_address='sender' WHERE id=?", repaired);
       db.tx.execute(s -> transactions.prepare(repaired, "sender", 0));
       db.tx.execute(
           s -> transactions.signed(repaired, new SignedEthTransaction("raw2", "unknown")));

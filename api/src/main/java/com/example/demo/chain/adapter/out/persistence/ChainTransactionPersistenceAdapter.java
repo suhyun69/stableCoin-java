@@ -37,12 +37,21 @@ public class ChainTransactionPersistenceAdapter implements ChainTransactionStore
         .findFirst();
   }
 
+  public String payoutSender(String payoutId) {
+    var senders =
+        jdbc.queryForList("SELECT sender_address FROM payouts WHERE id=?", String.class, payoutId);
+    if (senders.isEmpty()) throw new NotFoundException("payout not found");
+    return senders.getFirst();
+  }
+
   public ChainTransaction prepare(String payoutId, String sender, long initialNonce) {
     var payouts = jdbc.queryForList("SELECT * FROM payouts WHERE id=? FOR UPDATE", payoutId);
     if (payouts.isEmpty()) throw new NotFoundException("payout not found");
     var existing = find(payoutId);
     if (existing.isPresent()) return existing.get();
     var payout = payouts.getFirst();
+    if (!sender.equals(payout.get("sender_address")))
+      throw new ConflictException("payout sender mismatch");
     if (!"REQUESTED".equals(payout.get("status")))
       throw new ConflictException("payout cannot be sent");
     jdbc.update(

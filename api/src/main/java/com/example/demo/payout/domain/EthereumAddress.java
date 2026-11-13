@@ -7,11 +7,11 @@ import java.util.Locale;
 public record EthereumAddress(String value) {
   public EthereumAddress {
     if (value == null || !value.matches("0x[0-9a-fA-F]{40}")) {
-      throw new InvalidInputException("recipientAddress must be a 20-byte hexadecimal address");
+      throw new InvalidInputException("wallet address must be a 20-byte hexadecimal address");
     }
     value = value.toLowerCase(Locale.ROOT);
     if (value.equals("0x" + "0".repeat(40))) {
-      throw new InvalidInputException("zero address is not a payout recipient");
+      throw new InvalidInputException("zero address is not allowed");
     }
   }
 }

@@ -13,12 +13,16 @@ import org.web3j.utils.Numeric;
 
 public class Web3jEthAdapter implements EthChainPort {
   private final Web3j rpc;
-  private final Credentials credentials;
+  private final AnvilWalletRegistry wallets;
   private final long expectedChain;
 
   public Web3jEthAdapter(Web3j rpc, String privateKey, long chainId) {
+    this(rpc, new AnvilWalletRegistry(privateKey), chainId);
+  }
+
+  public Web3jEthAdapter(Web3j rpc, AnvilWalletRegistry wallets, long chainId) {
     this.rpc = rpc;
-    this.credentials = Credentials.create(privateKey);
+    this.wallets = wallets;
     this.expectedChain = chainId;
   }
 
@@ -42,35 +46,58 @@ public class Web3jEthAdapter implements EthChainPort {
     return observed;
   }
 
-  public String sender() {
-    return credentials.getAddress().toLowerCase(Locale.ROOT);
+  public Set<String> senders() {
+    return wallets.addresses();
   }
 
-  public long pendingNonce() {
+  public BigInteger balance(String address, long blockNumber) {
+    wallets.requireRegistered(address);
     chainId();
     return request(
-            () -> rpc.ethGetTransactionCount(sender(), DefaultBlockParameterName.PENDING).send())
+            () ->
+                rpc.ethGetBalance(
+                        address, DefaultBlockParameter.valueOf(BigInteger.valueOf(blockNumber)))
+                    .send())
+        .getBalance();
+  }
+
+  public void validateAnvilAccounts() {
+    chainId();
+    var accounts =
+        request(() -> rpc.ethAccounts().send()).getAccounts().stream()
+            .map(a -> a.toLowerCase(Locale.ROOT))
+            .collect(java.util.stream.Collectors.toSet());
+    if (!accounts.containsAll(wallets.addresses()))
+      throw new IllegalArgumentException(
+          "Registered wallets must belong to the running Anvil instance");
+  }
+
+  public long pendingNonce(String sender) {
+    wallets.requireRegistered(sender);
+    chainId();
+    return request(
+            () -> rpc.ethGetTransactionCount(sender, DefaultBlockParameterName.PENDING).send())
         .getTransactionCount()
         .longValueExact();
   }
 
-  public long confirmedNonce() {
+  public long confirmedNonce(String sender) {
     chainId();
     return request(
-            () -> rpc.ethGetTransactionCount(sender(), DefaultBlockParameterName.LATEST).send())
+            () -> rpc.ethGetTransactionCount(sender, DefaultBlockParameterName.LATEST).send())
         .getTransactionCount()
         .longValueExact();
   }
 
   public SignedEthTransaction sign(ChainTransaction transaction) {
     chainId();
-    if (!sender().equalsIgnoreCase(transaction.sender()))
-      throw new IllegalArgumentException("signer address mismatch");
+    var credentials = wallets.credentials(transaction.sender());
+    wallets.requireRegistered(transaction.recipient());
     BigInteger gasPrice =
         request(() -> rpc.ethGasPrice().send()).getGasPrice().multiply(BigInteger.TWO);
     var estimateRequest =
         new org.web3j.protocol.core.methods.request.Transaction(
-            sender(),
+            transaction.sender(),
             BigInteger.valueOf(transaction.nonce()),
             gasPrice,
             null,

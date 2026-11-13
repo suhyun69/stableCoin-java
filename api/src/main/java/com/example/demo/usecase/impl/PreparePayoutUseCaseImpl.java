@@ -28,8 +28,9 @@ public class PreparePayoutUseCaseImpl implements PreparePayoutUseCase {
     var transaction =
         existing.orElseGet(
             () -> {
-              long initial = chain.pendingNonce();
-              return tx.execute(status -> store.prepare(payoutId, chain.sender(), initial));
+              String sender = store.payoutSender(payoutId);
+              long initial = chain.pendingNonce(sender);
+              return tx.execute(status -> store.prepare(payoutId, sender, initial));
             });
     if ("CREATED".equals(transaction.status())) {
       var signed = chain.sign(transaction);

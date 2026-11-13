@@ -70,8 +70,7 @@ class LocalPayoutE2eTest {
     properties.put("stablepay.messaging.group", group);
     properties.put("stablepay.chain.enabled", "true");
     properties.put("stablepay.chain.rpc-url", rpcUrl);
-    properties.put("stablepay.chain.private-key", KEY);
-    properties.put("stablepay.chain.sender-address", SENDER);
+    properties.put("stablepay.chain.private-keys", KEY + "," + EthRpcTest.KEY);
     properties.put("stablepay.chain.id", "31337");
     properties.put("stablepay.chain.confirmations", "2");
     properties.put("stablepay.workers.enabled", Boolean.toString(workers));
@@ -102,7 +101,7 @@ class LocalPayoutE2eTest {
 
   String request(String recipient) throws Exception {
     return mapper.writeValueAsString(
-        Map.of("merchantId", "e2e", "recipientAddress", recipient, "amount", "0.001"));
+        Map.of("merchantId", "e2e", "from", SENDER, "to", recipient, "amount", "0.001"));
   }
 
   @FunctionalInterface
@@ -128,9 +127,19 @@ class LocalPayoutE2eTest {
     try (var db = new TestDatabase();
         var http = HttpClient.newHttpClient();
         var admin = Admin.create(Map.of("bootstrap.servers", bootstrap))) {
-      String recipient1 = "0x" + UUID.randomUUID().toString().replace("-", "") + "11111111";
-      String recipient2 = "0x" + UUID.randomUUID().toString().replace("-", "") + "22222222";
-      String body1 = request(recipient1), body2 = request(recipient2);
+      String recipient1 = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+      BigInteger initialBalance;
+      var balanceRpc = Web3j.build(new org.web3j.protocol.http.HttpService(rpcUrl));
+      try {
+        initialBalance =
+            balanceRpc
+                .ethGetBalance(recipient1, DefaultBlockParameterName.LATEST)
+                .send()
+                .getBalance();
+      } finally {
+        balanceRpc.shutdown();
+      }
+      String body1 = request(recipient1), body2 = request(recipient1);
       String id1, id2, raw1, raw2, hash1, hash2;
       long nonce1, nonce2;
       try (var first = start(db, false)) {
@@ -240,11 +249,8 @@ class LocalPayoutE2eTest {
         assertEquals(hash1, chain.transaction(hash1).orElseThrow().hash());
         var rpc = second.getBean(Web3j.class);
         assertEquals(
-            new BigInteger("1000000000000000"),
+            initialBalance.add(new BigInteger("2000000000000000")),
             rpc.ethGetBalance(recipient1, DefaultBlockParameterName.LATEST).send().getBalance());
-        assertEquals(
-            new BigInteger("1000000000000000"),
-            rpc.ethGetBalance(recipient2, DefaultBlockParameterName.LATEST).send().getBalance());
         long from =
             db.jdbc.queryForObject(
                 "SELECT min(included_block_number) FROM chain_transactions", Long.class);

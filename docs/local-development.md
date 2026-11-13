@@ -47,15 +47,18 @@ Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 사�
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
 | `ANVIL_RPC_URL` | `http://localhost:8545` |
 | `CHAIN_ID` | `31337` |
-| `ANVIL_PRIVATE_KEY` | 공개 Anvil account #0 테스트 키 |
-| `SENDER_ADDRESS` | `0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266` |
+| `ANVIL_PRIVATE_KEYS` | 쉼표로 구분한 개인키 목록. 기본값은 공개 Anvil account #0, #1 키 |
+| `SENDER_ADDRESS` | V4 업그레이드 전용. 거래가 없는 기존 지급의 발신자. 기본값은 account #0 |
 | `REQUIRED_CONFIRMATIONS` | `2` |
 | `PAYOUT_TOPIC` | `stablepay.payout-requested.v1` |
 | `PAYOUT_GROUP` | `stablepay-payout-sender` |
 | `WORKERS_ENABLED` | `true`; false면 listener·스케줄러를 정지 |
 | `MESSAGING_ENABLED`, `CHAIN_ENABLED` | 각각 `true`; 기능별 비활성화 |
 
-발신 주소와 개인 키가 일치하지 않으면 기동을 거부한다. RPC chain ID가 다르면 전송하지 않는다.
+개인키에서 주소를 파생하며, 등록된 모든 주소가 RPC `eth_accounts`에 있어야 기동한다.
+RPC chain ID도 기동 시 검증한다. 요청의 `from`, `to` 모두 등록된 계정만 허용한다.
+Anvil mnemonic이나 계정 수를 변경하면 `ANVIL_PRIVATE_KEYS`도 함께 변경한다.
+기본 등록 계정은 #0, #1이며 다른 계정을 사용하려면 해당 개인키를 추가한다.
 개인 키는 Git에 저장하지 않는다. 기본값은 누구나 아는 Anvil 로컬 테스트 키다.
 폴링 간격은 `stablepay.workers.outbox-delay-ms`, `confirm-delay-ms`, `recovery-delay-ms`로 조정한다.
 기본값은 각각 1000/2000/5000ms이고, 독립 작업을 위해 스케줄러 스레드 3개를 사용한다.
@@ -85,7 +88,8 @@ Kafka·Anvil 주소는 위 환경 변수를 재사용한다. 테스트는 chain 
 - 소비 실패: 영구 오류는 즉시 DLT, 일시 오류는 최초 포함 5회 후 DLT. DLT 전송 확인 실패 시 원본을 완료하지 않는다.
 - 서명 후 중단: Kafka 재전달과 DB에 저장된 원문을 사용한다. 신규 nonce를 할당하지 않는다.
 - 응답 유실: `BROADCAST_UNKNOWN`을 기록한다. 복구 작업은 저장 hash를 조회하거나 같은 원문을 재전송한다.
-- nonce가 이미 채굴됐지만 저장 hash가 없거나 signer가 변경된 경우: 자동 재지급하지 않고 검토 상태로 분리한다.
+- 해당 발신자의 nonce가 이미 채굴됐지만 저장 hash가 없는 경우: 자동 재지급하지 않고 검토 상태로 분리한다.
+- 키 등록이 해제되어도 이미 저장된 서명 원문은 재전송한다. 대사는 과거 지급의 발신자도 포함한다.
 - 정산 내용·블록 불일치: 검토 상태로 전환한다. 검토 상태는 자동 해제하지 않는다.
 
 서명 전 RPC/가스 산정 실패가 DLT로 간 경우 CREATED 거래의 nonce는 예약된 채 남는다.

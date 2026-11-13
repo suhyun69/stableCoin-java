@@ -14,6 +14,11 @@ public class ReconciliationPersistenceAdapter implements ReconciliationStorePort
     this.jdbc = jdbc;
   }
 
+  public Set<String> historicalSenders() {
+    return new HashSet<>(
+        jdbc.queryForList("SELECT DISTINCT sender_address FROM payouts", String.class));
+  }
+
   public void lock() {
     jdbc.query(
         "SELECT pg_advisory_xact_lock(hashtextextended('stablepay.reconciliation',0))", rs -> {});
@@ -30,7 +35,7 @@ public class ReconciliationPersistenceAdapter implements ReconciliationStorePort
                 + ")";
     args.addAll(hashes);
     return jdbc.query(
-        "SELECT p.id,p.status payout_status,p.recipient_address,p.amount_atomic,ct.sender_address,ct.nonce,ct.transaction_hash,ct.included_block_number,ct.status chain_status,(p.amount_atomic=ct.amount_atomic AND lower(p.recipient_address)=lower(ct.recipient_address)) consistent FROM payouts p JOIN chain_transactions ct ON ct.payout_id=p.id WHERE lower(ct.sender_address)=? AND (ct.included_block_number BETWEEN ? AND ? OR "
+        "SELECT p.id,p.status payout_status,p.recipient_address,p.amount_atomic,ct.sender_address,ct.nonce,ct.transaction_hash,ct.included_block_number,ct.status chain_status,(lower(p.sender_address)=lower(ct.sender_address) AND p.amount_atomic=ct.amount_atomic AND lower(p.recipient_address)=lower(ct.recipient_address)) consistent FROM payouts p JOIN chain_transactions ct ON ct.payout_id=p.id WHERE lower(ct.sender_address)=? AND (ct.included_block_number BETWEEN ? AND ? OR "
             + matching
             + ")",
         (rs, n) ->

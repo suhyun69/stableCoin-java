@@ -6,6 +6,8 @@ import java.util.*;
 public interface ChainTransactionStorePort {
   Optional<ChainTransaction> find(String payoutId);
 
+  String payoutSender(String payoutId);
+
   ChainTransaction prepare(String payoutId, String sender, long initialNonce);
 
   ChainTransaction signed(String payoutId, SignedEthTransaction signed);

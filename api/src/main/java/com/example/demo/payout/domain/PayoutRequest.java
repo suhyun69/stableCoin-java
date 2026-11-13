@@ -7,7 +7,11 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 public record PayoutRequest(
-    String merchantId, EthereumAddress recipientAddress, EthAmount amount, String idempotencyKey) {
+    String merchantId,
+    EthereumAddress senderAddress,
+    EthereumAddress recipientAddress,
+    EthAmount amount,
+    String idempotencyKey) {
   public PayoutRequest {
     if (merchantId == null || merchantId.isBlank() || merchantId.length() > 200) {
       throw new InvalidInputException("merchantId is required and must be at most 200 characters");
@@ -16,12 +20,20 @@ public record PayoutRequest(
       throw new InvalidInputException(
           "Idempotency-Key is required and must be at most 200 characters");
     }
-    if (recipientAddress == null || amount == null) {
-      throw new InvalidInputException("recipientAddress and amount are required");
+    if (senderAddress == null || recipientAddress == null || amount == null) {
+      throw new InvalidInputException("senderAddress, recipientAddress and amount are required");
     }
   }
 
   public String fingerprint() {
+    return hash("v2:" + senderAddress.value() + ":" + legacyCanonical());
+  }
+
+  public String legacyFingerprint() {
+    return hash(legacyCanonical());
+  }
+
+  private String legacyCanonical() {
     // Versioned and length-prefixed merchant field; canonical address and wei.
     String canonical =
         "v1:"
@@ -32,6 +44,10 @@ public record PayoutRequest(
             + recipientAddress.value()
             + ":"
             + amount.wei();
+    return canonical;
+  }
+
+  private static String hash(String canonical) {
     try {
       return HexFormat.of()
           .formatHex(

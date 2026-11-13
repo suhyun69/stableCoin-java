@@ -25,13 +25,13 @@ class EthRpcTest {
     try {
       var chain = new Web3jEthAdapter(rpc, KEY, 31337);
       assertEquals(31337, chain.chainId());
-      long nonce = chain.pendingNonce();
-      String recipient = "0x" + "ab".repeat(20);
+      long nonce = chain.pendingNonce(Credentials.create(KEY).getAddress());
+      String recipient = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
       var transaction =
           new ChainTransaction(
               "ctx_test",
               "pay_test",
-              chain.sender(),
+              Credentials.create(KEY).getAddress(),
               recipient,
               BigInteger.ONE,
               nonce,
@@ -42,7 +42,7 @@ class EthRpcTest {
               0);
       var signed = chain.sign(transaction);
       var decoded = (SignedRawTransaction) TransactionDecoder.decode(signed.raw());
-      assertEquals(chain.sender(), decoded.getFrom());
+      assertEquals(Credentials.create(KEY).getAddress(), decoded.getFrom());
       assertEquals(BigInteger.ONE, decoded.getValue());
       assertEquals(recipient, decoded.getTo());
       chain.broadcast(signed);

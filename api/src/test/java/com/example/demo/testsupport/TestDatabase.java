@@ -33,6 +33,8 @@ public final class TestDatabase implements AutoCloseable {
                 .createRequested(
                     new com.example.demo.payout.domain.PayoutRequest(
                         "integration",
+                        new com.example.demo.payout.domain.EthereumAddress(
+                            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
                         new com.example.demo.payout.domain.EthereumAddress("0x" + "ab".repeat(20)),
                         com.example.demo.payout.domain.EthAmount.fromEth("0.001"),
                         UUID.randomUUID().toString()))

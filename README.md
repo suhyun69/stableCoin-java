@@ -19,9 +19,12 @@ Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 설�
 curl -i -X POST http://localhost:8080/payouts \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: example-eth-1' \
-  -d '{"merchantId":"demo","recipientAddress":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amount":"0.001"}'
+  -d '{"merchantId":"demo","from":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","to":"0x70997970c51812dc3a010c7d01b50e0d17dc79c8","amount":"0.001"}'
 
 curl http://localhost:8080/payouts/<응답의-id>
+
+# Registered Anvil wallets and ETH balances
+curl http://localhost:8080/wallets
 ```
 
 ## 처리 흐름

@@ -48,9 +48,11 @@ public class RunReconciliationUseCaseImpl implements RunReconciliationUseCase {
     long head = chain.head();
     if (range.to() > head) throw new IllegalStateException("chain has not reached requested range");
     String boundaryHash = chain.blockHash(range.to());
+    Set<String> senders = new HashSet<>(chain.senders());
+    senders.addAll(store.historicalSenders());
     List<ObservedEthTransfer> observed = new ArrayList<>();
     for (var transfer : chain.transfers(range.from(), range.to())) {
-      if (!chain.sender().equalsIgnoreCase(transfer.from())) continue;
+      if (!senders.contains(transfer.from().toLowerCase(Locale.ROOT))) continue;
       var receipt =
           chain
               .receipt(transfer.hash())
@@ -78,9 +80,11 @@ public class RunReconciliationUseCaseImpl implements RunReconciliationUseCase {
     return tx.execute(
         status -> {
           store.lock();
+          var hashes = observed.stream().map(ObservedEthTransfer::hash).toList();
           var ledger =
-              store.ledger(
-                  range, observed.stream().map(ObservedEthTransfer::hash).toList(), chain.sender());
+              senders.stream()
+                  .flatMap(sender -> store.ledger(range, hashes, sender).stream())
+                  .toList();
           var findings = ReconciliationPolicy.classify(ledger, observed, required);
           for (var finding : findings) {
             boolean resolved = false;

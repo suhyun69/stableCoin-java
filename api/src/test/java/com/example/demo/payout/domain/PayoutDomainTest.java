@@ -59,23 +59,51 @@ class PayoutDomainTest {
   void fingerprintUsesCanonicalAmountAndAddress() {
     var first =
         new PayoutRequest(
-            "merchant", new EthereumAddress(ADDRESS), EthAmount.fromEth("1.0"), "key1");
+            "merchant",
+            new com.example.demo.payout.domain.EthereumAddress(
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+            new EthereumAddress(ADDRESS),
+            EthAmount.fromEth("1.0"),
+            "key1");
     var retry =
         new PayoutRequest(
             "merchant",
+            new com.example.demo.payout.domain.EthereumAddress(
+                "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
             new EthereumAddress("0x" + "AB".repeat(20)),
             EthAmount.fromEth("01.00"),
             "key2");
     assertEquals(first.fingerprint(), retry.fingerprint());
     assertNotEquals(
         first.fingerprint(),
-        new PayoutRequest("other", first.recipientAddress(), first.amount(), "key1").fingerprint());
+        new PayoutRequest(
+                "other",
+                new com.example.demo.payout.domain.EthereumAddress(
+                    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+                first.recipientAddress(),
+                first.amount(),
+                "key1")
+            .fingerprint());
     assertThrows(
         InvalidInputException.class,
-        () -> new PayoutRequest(" ", first.recipientAddress(), first.amount(), "key"));
+        () ->
+            new PayoutRequest(
+                " ",
+                new com.example.demo.payout.domain.EthereumAddress(
+                    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+                first.recipientAddress(),
+                first.amount(),
+                "key"));
     assertThrows(
         InvalidInputException.class,
-        () -> new PayoutRequest("merchant", first.recipientAddress(), first.amount(), ""));
+        () ->
+            new PayoutRequest(
+                "merchant",
+                new com.example.demo.payout.domain.EthereumAddress(
+                    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
+                first.recipientAddress(),
+                first.amount(),
+                ""));
   }
 
   @Test

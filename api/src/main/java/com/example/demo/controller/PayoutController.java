@@ -24,14 +24,15 @@ public class PayoutController {
     var result =
         create.create(
             new CreatePayoutAppRequest(
-                request.merchantId(), request.recipientAddress(), request.amount(), key));
+                request.merchantId(), request.from(), request.to(), request.amount(), key));
     return ResponseEntity.accepted()
         .location(URI.create("/payouts/" + result.id()))
         .body(
             new PayoutWebResponse(
                 result.id(),
                 result.merchantId(),
-                result.recipientAddress(),
+                result.from(),
+                result.to(),
                 result.amount(),
                 result.status()));
   }

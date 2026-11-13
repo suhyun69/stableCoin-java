@@ -27,6 +27,7 @@ class PayoutConfirmationTest {
               chain, transactions, store, new DataSourceTransactionManager(db.dataSource), 2);
       for (String kind : List.of("success", "reverted", "mismatch")) {
         String id = db.payout();
+        db.jdbc.update("UPDATE payouts SET sender_address='sender' WHERE id=?", id);
         var saved = db.tx.execute(s -> transactions.prepare(id, "sender", 0));
         db.tx.execute(s -> transactions.signed(id, new SignedEthTransaction("raw", kind)));
         when(chain.receipt(kind))

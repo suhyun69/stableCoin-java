@@ -32,7 +32,7 @@ class PayoutPostgresTest {
   static final String USER = System.getenv().getOrDefault("TEST_DATABASE_USERNAME", "stablepay");
   static final String PASSWORD =
       System.getenv().getOrDefault("TEST_DATABASE_PASSWORD", "stablepay");
-  static final String ADDRESS = "0x" + "ab".repeat(20);
+  static final String ADDRESS = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
 
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry registry) {
@@ -60,7 +60,8 @@ class PayoutPostgresTest {
   }
 
   CreatePayoutAppRequest request(String key, String amount) {
-    return new CreatePayoutAppRequest("merchant", ADDRESS, amount, key);
+    return new CreatePayoutAppRequest(
+        "merchant", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", ADDRESS, amount, key);
   }
 
   @Test
@@ -133,7 +134,9 @@ class PayoutPostgresTest {
   void httpContract() throws Exception {
     String key = UUID.randomUUID().toString();
     String body =
-        "{\"merchantId\":\"merchant\",\"recipientAddress\":\"" + ADDRESS + "\",\"amount\":\"0.1\"}";
+        "{\"merchantId\":\"merchant\",\"from\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"to\":\""
+            + ADDRESS
+            + "\",\"amount\":\"0.1\"}";
     mvc.perform(post("/payouts").contentType("application/json").content(body))
         .andExpect(status().isBadRequest());
     mvc.perform(
@@ -149,5 +152,54 @@ class PayoutPostgresTest {
                 .contentType("application/json")
                 .content(body.replace("0.1", "0.2")))
         .andExpect(status().isConflict());
+  }
+
+  @Test
+  void rejectsUnregisteredWalletsBeforeCreatingPayoutOrNonce() throws Exception {
+    String unknown = "0x" + "ab".repeat(20);
+    for (boolean unknownSender : new boolean[] {true, false}) {
+      String key = UUID.randomUUID().toString();
+      String from = unknownSender ? unknown : "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+      String to = unknownSender ? ADDRESS : unknown;
+      String body =
+          new com.fasterxml.jackson.databind.ObjectMapper()
+              .writeValueAsString(
+                  java.util.Map.of(
+                      "merchantId", "merchant", "from", from, "to", to, "amount", "0.001"));
+      mvc.perform(
+              post("/payouts")
+                  .header("Idempotency-Key", key)
+                  .contentType("application/json")
+                  .content(body))
+          .andExpect(status().isBadRequest());
+      assertEquals(
+          0,
+          jdbc.queryForObject(
+              "SELECT count(*) FROM payouts WHERE idempotency_key=?", Integer.class, key));
+    }
+  }
+
+  @Test
+  void senderParticipatesInIdempotencyIncludingLegacyFingerprints() {
+    String key = UUID.randomUUID().toString();
+    var input = request(key, "0.1");
+    var first = create.create(input);
+    assertEquals(input.from(), first.from());
+    assertEquals(input.to(), first.to());
+    var changed = new CreatePayoutAppRequest("merchant", ADDRESS, ADDRESS, "0.1", key);
+    assertThrows(ConflictException.class, () -> create.create(changed));
+    var legacy =
+        new com.example.demo.payout.domain.PayoutRequest(
+            "merchant",
+            new com.example.demo.payout.domain.EthereumAddress(input.from()),
+            new com.example.demo.payout.domain.EthereumAddress(input.to()),
+            com.example.demo.payout.domain.EthAmount.fromEth("0.1"),
+            key);
+    jdbc.update(
+        "UPDATE payouts SET request_fingerprint=? WHERE id=?",
+        legacy.legacyFingerprint(),
+        first.id());
+    assertEquals(first.id(), create.create(input).id());
+    assertThrows(ConflictException.class, () -> create.create(changed));
   }
 }

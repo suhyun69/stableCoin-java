@@ -6,11 +6,13 @@ import java.util.*;
 public interface EthChainPort {
   long chainId();
 
-  String sender();
+  Set<String> senders();
 
-  long pendingNonce();
+  java.math.BigInteger balance(String address, long blockNumber);
 
-  long confirmedNonce();
+  long pendingNonce(String sender);
+
+  long confirmedNonce(String sender);
 
   SignedEthTransaction sign(ChainTransaction transaction);
 

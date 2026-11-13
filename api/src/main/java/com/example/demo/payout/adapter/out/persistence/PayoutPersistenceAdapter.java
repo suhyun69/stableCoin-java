@@ -28,6 +28,7 @@ public class PayoutPersistenceAdapter implements PayoutRepositoryPort {
                 new Payout(
                     rs.getString("id"),
                     rs.getString("merchant_id"),
+                    rs.getString("sender_address"),
                     rs.getString("recipient_address"),
                     rs.getBigDecimal("amount_atomic").toBigIntegerExact().toString(),
                     rs.getString("request_fingerprint"),
@@ -35,16 +36,19 @@ public class PayoutPersistenceAdapter implements PayoutRepositoryPort {
             request.idempotencyKey());
     if (!existing.isEmpty()) {
       var payout = existing.getFirst();
-      if (!payout.requestFingerprint().equals(request.fingerprint()))
+      if (!payout.senderAddress().equals(request.senderAddress().value())
+          || (!payout.requestFingerprint().equals(request.fingerprint())
+              && !payout.requestFingerprint().equals(request.legacyFingerprint())))
         throw new ConflictException("Idempotency-Key was reused with a different request");
       return payout;
     }
     String id = "pay_" + UUID.randomUUID();
     jdbc.update(
-        "INSERT INTO payouts (id,idempotency_key,merchant_id,recipient_address,amount_atomic,request_fingerprint,status) VALUES (?,?,?,?,?,?,'REQUESTED')",
+        "INSERT INTO payouts (id,idempotency_key,merchant_id,sender_address,recipient_address,amount_atomic,request_fingerprint,status) VALUES (?,?,?,?,?,?,?,'REQUESTED')",
         id,
         request.idempotencyKey(),
         request.merchantId(),
+        request.senderAddress().value(),
         request.recipientAddress().value(),
         new BigDecimal(request.amount().wei()),
         request.fingerprint());
@@ -62,6 +66,7 @@ public class PayoutPersistenceAdapter implements PayoutRepositoryPort {
     return new Payout(
         id,
         request.merchantId(),
+        request.senderAddress().value(),
         request.recipientAddress().value(),
         request.amount().wei().toString(),
         request.fingerprint(),

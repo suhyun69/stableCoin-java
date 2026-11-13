@@ -17,8 +17,7 @@ class PayoutConsumerTest {
   void replayDoesNotSendAgainAndUnknownBroadcastIsDurable() {
     try (var db = new TestDatabase()) {
       var chain = mock(EthChainPort.class);
-      when(chain.sender()).thenReturn("sender");
-      when(chain.pendingNonce()).thenReturn(0L);
+      when(chain.pendingNonce(anyString())).thenReturn(0L);
       when(chain.sign(any()))
           .thenAnswer(
               inv -> {

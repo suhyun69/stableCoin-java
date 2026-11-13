@@ -39,12 +39,8 @@ public class RecoverBroadcastsUseCaseImpl implements RecoverBroadcastsUseCase {
     for (String id : store.candidates(50)) {
       try {
         var saved = transactions.find(id).orElseThrow();
-        if (!chain.sender().equalsIgnoreCase(saved.sender())) {
-          tx.executeWithoutResult(s -> store.review(saved, "SIGNER_CHANGED"));
-          continue;
-        }
         var observed = chain.transaction(saved.hash());
-        if (observed.isEmpty() && chain.confirmedNonce() > saved.nonce()) {
+        if (observed.isEmpty() && chain.confirmedNonce(saved.sender()) > saved.nonce()) {
           // The nonce is mined, but the saved hash is absent: never create a replacement payout.
           tx.executeWithoutResult(
               s -> store.review(saved, "NONCE_CONFLICT_OR_TRANSACTION_UNAVAILABLE"));
