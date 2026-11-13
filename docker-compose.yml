@@ -15,25 +15,12 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-  anvil-data-init:
-    image: ghcr.io/foundry-rs/foundry:v1.7.0
-    user: "0:0"
-    entrypoint: [sh, -c]
-    command: ["chown 1000:1000 /data"]
-    volumes:
-      - anvil-data:/data
-    restart: "no"
   anvil:
-    depends_on:
-      anvil-data-init:
-        condition: service_completed_successfully
     image: ghcr.io/foundry-rs/foundry:v1.7.0
     entrypoint: [anvil]
-    command: [--host, 0.0.0.0, --chain-id, '31337', --block-time, '2', --state, /data/state.json, --state-interval, '1', --preserve-historical-states]
+    command: [--host, 0.0.0.0, --chain-id, '31337', --block-time, '2', --prune-history, '128']
     ports:
       - "127.0.0.1:${ANVIL_PORT:-8545}:8545"
-    volumes:
-      - anvil-data:/data
     stop_grace_period: 30s
     healthcheck:
       test: [CMD, cast, chain-id, --rpc-url, 'http://127.0.0.1:8545']
@@ -69,5 +56,4 @@ services:
       retries: 20
 volumes:
   postgres-data:
-  anvil-data:
   kafka-data:

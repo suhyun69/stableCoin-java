@@ -1,11 +1,9 @@
 # 로컬 실행과 검증
 
-## 인프라
+## 한 번에 실행
 
 ```sh
-cp .env.example .env
-docker compose up -d --wait
-docker compose ps
+./dev.sh
 ```
 
 | 서비스 | 호스트 주소 | 컨테이너 내부 주소 |
@@ -16,19 +14,25 @@ docker compose ps
 
 Anvil chain ID는 31337이며 2초마다 블록을 생성한다. 테스트 지갑에 ETH가 미리 들어 있다.
 Kafka는 로컬 단일 노드 KRaft 모드다. 자동 토픽 생성을 끄고 애플리케이션이 토픽을 선언한다.
-일회성 `anvil-data-init` 서비스가 상태 볼륨을 Anvil 비root 사용자(UID 1000)에게 준비한다.
-정상 완료 후 해당 컨테이너가 Exited로 보이는 것은 정상이다.
-포트는 loopback에만 공개한다. 데이터는 서비스별 named volume에 유지한다.
-Anvil은 주기적으로 상태를 저장하고 정상 종료 시 마지막 상태를 저장한다.
-강제 종료 직전 상태는 유실될 수 있다.
+Docker Desktop과 Java 21을 먼저 준비한다. 스크립트는 작업 디렉터리와 무관하게 실행할 수 있다.
+`.env`가 없으면 예제를 복사하며, 이미 있는 설정은 유지하고 API 프로세스에도 전달한다.
+`.env`는 Bash 환경 변수 파일이므로 값을 공백 없이 지정하거나 따옴표로 감싼다.
+
+매 실행 시 프로젝트의 기존 컨테이너와 PostgreSQL·Kafka·과거 Anvil 상태 볼륨을 삭제한다.
+지급 원장·메시지·체인을 함께 초기화하고, 인프라가 healthy가 된 후 API를 실행한다.
+초기화 범위는 이 Compose 프로젝트이며 Docker Desktop 전체 메모리를 초기화하지 않는다.
+기존 API가 기본 포트에서 실행 중이면 먼저 종료해야 한다.
+
+Anvil은 상태 파일을 저장하거나 로드하지 않는다. 과거 상태 스냅샷은 메모리에 최대 128개만
+유지한다(`--prune-history 128`). 포트는 loopback에만 공개한다.
 
 ```sh
-docker compose stop
-docker compose up -d --wait
+# API는 실행 중인 터미널에서 Ctrl+C로 종료
+docker compose down
 ```
 
-`docker compose down`은 볼륨을 유지한다. 개발 데이터를 모두 초기화할 때만
-`docker compose down -v`를 사용한다. DB만 유지하고 체인만 초기화하면 원장과 체인이 어긋난다.
+다음 `./dev.sh` 실행 시 모든 개발 데이터를 다시 초기화한다. DB와 체인의 일관성을 위해
+Anvil만 재생성한 뒤 기존 원장을 사용하는 방식은 피한다.
 
 ## 백엔드
 
@@ -37,8 +41,10 @@ cd api
 ./gradlew bootRun
 ```
 
-Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 사용자 정의 포트·비밀번호를 쓸 때는
-아래 환경 변수를 Spring Boot 프로세스에도 지정한다.
+위 명령은 API만 수동 실행할 때 사용한다. 일반 실행은 루트의 `./dev.sh`를 사용한다.
+스크립트는 `.env`의 `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
+`ANVIL_PORT`, `KAFKA_PORT`를 API 연결 설정에도 반영한다.
+수동으로 Gradle을 실행할 때는 아래 환경 변수를 직접 전달한다.
 
 | 환경 변수 | 기본값·역할 |
 |---|---|
@@ -47,7 +53,7 @@ Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 사�
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
 | `ANVIL_RPC_URL` | `http://localhost:8545` |
 | `CHAIN_ID` | `31337` |
-| `ANVIL_PRIVATE_KEYS` | 쉼표로 구분한 개인키 목록. 기본값은 공개 Anvil account #0, #1 키 |
+| `ANVIL_PRIVATE_KEYS` | 쉼표로 구분한 개인키 목록. 기본값은 공개 Anvil account #0~#9 전체 10개 키 |
 | `SENDER_ADDRESS` | V4 업그레이드 전용. 거래가 없는 기존 지급의 발신자. 기본값은 account #0 |
 | `REQUIRED_CONFIRMATIONS` | `2` |
 | `PAYOUT_TOPIC` | `stablepay.payout-requested.v1` |
@@ -58,7 +64,8 @@ Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 사�
 개인키에서 주소를 파생하며, 등록된 모든 주소가 RPC `eth_accounts`에 있어야 기동한다.
 RPC chain ID도 기동 시 검증한다. 요청의 `from`, `to` 모두 등록된 계정만 허용한다.
 Anvil mnemonic이나 계정 수를 변경하면 `ANVIL_PRIVATE_KEYS`도 함께 변경한다.
-기본 등록 계정은 #0, #1이며 다른 계정을 사용하려면 해당 개인키를 추가한다.
+기본 등록 계정은 #0~#9 전체 10개이며 `/wallets`에서 모두 조회하고 결제에 사용할 수 있다.
+기존 `.env`를 유지하고 있다면 `.env.example`의 `ANVIL_PRIVATE_KEYS` 값을 반영한다.
 개인 키는 Git에 저장하지 않는다. 기본값은 누구나 아는 Anvil 로컬 테스트 키다.
 폴링 간격은 `stablepay.workers.outbox-delay-ms`, `confirm-delay-ms`, `recovery-delay-ms`로 조정한다.
 기본값은 각각 1000/2000/5000ms이고, 독립 작업을 위해 스케줄러 스레드 3개를 사용한다.

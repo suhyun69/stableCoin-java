@@ -5,15 +5,18 @@ Java 21 / Spring Boot / PostgreSQL / Kafka / Anvil 기반 로컬 ETH 지급 백�
 ## 실행
 
 ```sh
-cp .env.example .env
-docker compose up -d --wait
-cd api
-./gradlew bootRun
+./dev.sh
 ```
 
 기본 API 주소는 `http://localhost:8080`, Swagger UI는 `http://localhost:8080/swagger-ui.html`이다.
-기본 지갑은 공개된 Anvil 테스트 지갑이며 chain ID는 31337이다.
-Compose `.env`는 백엔드 프로세스에 자동 전달되지 않는다. 설정 변경은 [개발 안내](docs/local-development.md)를 참고한다.
+기본 지갑은 공개된 Anvil 테스트 지갑 #0~#9 전체 10개이며 chain ID는 31337이다.
+`/wallets`에서 10개 지갑과 잔액을 조회하고, 어느 지갑이든 `from`, `to`로 사용할 수 있다.
+Docker Desktop과 Java 21이 필요하다. `.env`가 없으면 자동 생성하고 백엔드에도 적용한다.
+**실행할 때마다 프로젝트의 PostgreSQL·Kafka 데이터와 Anvil 체인을 모두 삭제하고 새로 시작한다.**
+기존 컨테이너를 제거하므로 해당 컨테이너의 메모리 상태도 초기화된다. Anvil 상태 파일은 저장하거나 불러오지 않는다.
+API는 터미널에서 실행하며 `Ctrl+C`로 종료한다. 인프라는 `docker compose down`으로 종료한다.
+이미 실행 중인 API가 있다면 먼저 종료한다. 설정 변경은 [개발 안내](docs/local-development.md)를 참고한다.
+8080을 다른 프로젝트가 쓰고 있다면 `SERVER_PORT=18080 ./dev.sh`로 실행할 수 있다.
 
 ```sh
 curl -i -X POST http://localhost:8080/payouts \
